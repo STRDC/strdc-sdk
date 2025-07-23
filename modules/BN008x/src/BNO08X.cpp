@@ -429,8 +429,7 @@ static uint8_t bno08x_get_ID(bno08x_t *handle)
 }
 
 /****************************************************************************
- * @brief Send Sleep Command. Note: Putting the BNO08x to sleep with no wake/always-on enabled and configured sensors will place the into a sort of stasis.
- *  You will be unable to send messages to the IC without resetting the IC (requiring all configuration changes to be made again) in this case.
+ * @brief Send Sleep Command.
  * @param handle Handle for BNO08x chip.
  * @return 0: Success
  *  1: Timed out sending sleep command
