@@ -52,7 +52,7 @@ typedef struct {
 
 } serial_handle_t; // Handler for Serial Peripheral
 
-void hal_serial_open(serial_handle_t *, uint32_t);
+uint8_t hal_serial_open(serial_handle_t *, uint32_t, uint8_t);
 uint8_t hal_serial_read(serial_handle_t *);
 void hal_serial_write(serial_handle_t *, uint8_t);
 uint8_t hal_serial_read_available(serial_handle_t *);

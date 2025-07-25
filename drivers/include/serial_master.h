@@ -33,7 +33,7 @@
 
 #include "hal_serial_master.h"
 
-void serial_open(serial_handle_t *, uint32_t);
+uint8_t serial_open(serial_handle_t *, uint32_t, uint8_t);
 uint8_t serial_read(serial_handle_t *, uint8_t *, uint16_t);
 uint8_t serial_peek(serial_handle_t *);
 void serial_write(serial_handle_t *, uint8_t *, uint16_t);

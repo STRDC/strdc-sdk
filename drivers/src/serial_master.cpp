@@ -36,10 +36,14 @@
  * @brief Initialize and open a serial (UART) peripheral.
  * @param handle Pointer to serial handler. Handler should have configuration defined before calling this function.
  * @param speed Speed (baudrate) of operation of peripheral. Defaults to 115200.
+ * @return 0: Success
+ *  1: Timed out
  ****************************************************************************/
-void serial_open(serial_handle_t *handle, uint32_t speed = 115200)
+uint8_t serial_open(serial_handle_t *handle, uint32_t speed = 115200, uint8_t busType = UART_TYPE_BASIC)
 {
-    hal_serial_open(handle, speed);
+    
+    return hal_serial_open(handle, speed, busType);
+
 }
 
 /****************************************************************************
