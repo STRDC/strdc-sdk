@@ -1,7 +1,7 @@
 /*
- * BNO08x UART_RVC Example Sketch.
+ * BNO08x UART RVC Example C++ File.
  *
- * @file        STRDC_BNO08x_UART_RVC_Example.ino
+ * @file        main.cpp
  * @author      Alex Zundel
  * @copyright   Copyright (c) 2025 Stardust Orbital
  *
@@ -51,7 +51,7 @@ void setup() {
   Serial.println(" Stardust Orbital BNO08x UART_RVC Example ");
   Serial.println("***************************************");
 
-  Serial3.begin(115200);
+  uart3.bus->begin(115200);
 
 }
 

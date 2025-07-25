@@ -1,7 +1,7 @@
 /*
- * BNO08x Rotation Vector Example Sketch.
+ * BNO08x Rotation Vector Example C++ File.
  *
- * @file        STRDC_BNO08x_Rotation_Vector_Example.ino
+ * @file        main.cpp
  * @author      Alex Zundel
  * @copyright   Copyright (c) 2025 Stardust Orbital
  *
@@ -51,17 +51,23 @@ bno08x_t bno;
 
 // Pin Definition
 #define LED 3
-/*
+
 // Pin definitions for SPI
 #define BNO_PIN_INT 14
 #define BNO_PIN_RST 20
 #define BNO_PIN_WAKE 7
-*/
+/*
 // Pin definitions for I2C
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 15
 
+// Pin definitions for UART
+#define BNO_PIN_INT 17
+#define BNO_PIN_RST 16
+#define BNO_PIN_WAKE 6
+#define UART_BUFFER_EXTRA // Unnecessary for board configurations with excess of 300 byte read buffers and other communication configurations
+*/
 
 // BNO08x Info
 #define BNO_ADDRESS 0x4A
@@ -129,17 +135,21 @@ void get_data(bno08x_t * ic, bno_data_t * bno_data)
 }
 
 void setup() {
-  /*
+  
   // SPI Configuration
   bno.bus = &SPI_0;
   bno.busType = BNO08X_SPI;
   bno.busAddr = BNO_SS;
-  */
+  /*
   // I2C Configuration
   bno.bus = &i2c1;
   bno.busType = BNO08X_I2C;
   bno.busAddr = BNO_ADDRESS;
   
+  // UART Configuration
+  bno.bus = &uart2;
+  bno.busType = BNO08X_UART;
+  */
   // Shared Pin Configuration
   bno.wakePin = BNO_PIN_WAKE;
   bno.pinInt = BNO_PIN_INT;
@@ -164,11 +174,14 @@ void setup() {
 
   while (init)
   {
-    init = bno08x_init(&bno, 400000);
+    init = bno08x_init(&bno, 1000000); // UART must be 3Mbaud (3000000)
     switch(init)
     {
       case 0:
         Serial.println("BNO Initialized Successfully");
+        break;
+      case 1:
+        Serial.println("Failed waiting for interrupt");
         break;
       case 2:
         Serial.println("Failed to Find I2C Device");
