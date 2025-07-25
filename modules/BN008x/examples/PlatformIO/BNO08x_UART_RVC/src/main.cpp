@@ -51,7 +51,7 @@ void setup() {
   Serial.println(" Stardust Orbital BNO08x UART_RVC Example ");
   Serial.println("***************************************");
 
-  Serial3.begin(115200);
+  uart3.bus->begin(115200);
 
 }
 

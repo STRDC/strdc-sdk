@@ -61,6 +61,12 @@ bno08x_t bno;
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 15
+
+// Pin definitions for UART
+#define BNO_PIN_INT 17
+#define BNO_PIN_RST 16
+#define BNO_PIN_WAKE 6
+#define UART_BUFFER_EXTRA // Unnecessary for board configurations with excess of 300 byte read buffers and other communication configurations
 */
 
 // BNO08x Info
@@ -131,6 +137,10 @@ void setup() {
   bno.bus = &i2c1;
   bno.busType = BNO08X_I2C;
   bno.busAddr = BNO_ADDRESS;
+  
+  // UART Configuration
+  bno.bus = &uart2;
+  bno.busType = BNO08X_UART;
   */
   // Shared Pin Configuration
   bno.wakePin = BNO_PIN_WAKE;
@@ -156,11 +166,14 @@ void setup() {
 
   while (init)
   {
-    init = bno08x_init(&bno, 1000000);
+    init = bno08x_init(&bno, 1000000); // UART must be 3Mbaud (3000000)
     switch(init)
     {
       case 0:
         Serial.println("BNO Initialized Successfully");
+        break;
+      case 1:
+        Serial.println("Failed waiting for interrupt");
         break;
       case 2:
         Serial.println("Failed to Find I2C Device");

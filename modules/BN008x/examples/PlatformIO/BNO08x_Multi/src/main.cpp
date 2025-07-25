@@ -54,15 +54,21 @@ bno08x_t bno2;
 #define LED 3
 
 // Pin definitions for SPI
-#define BNO_PIN_INT_1 14
-#define BNO_PIN_RST_1 20
-#define BNO_PIN_WAKE_1 7
+#define BNO_PIN_INT 14
+#define BNO_PIN_RST 20
+#define BNO_PIN_WAKE 7
 
 // Pin definitions for I2C
-#define BNO_PIN_INT_2 17
-#define BNO_PIN_RST_2 16
-#define BNO_PIN_WAKE_2 15
-
+#define BNO_PIN_INT 17
+#define BNO_PIN_RST 16
+#define BNO_PIN_WAKE 15
+/*
+// Pin definitions for UART
+#define BNO_PIN_INT 17
+#define BNO_PIN_RST 16
+#define BNO_PIN_WAKE 6
+#define UART_BUFFER_EXTRA // Unnecessary for board configurations with excess of 300 byte read buffers and other communication configurations
+*/
 
 // BNO08x Info
 #define BNO_ADDRESS 0x4A
@@ -142,14 +148,19 @@ void get_data(bno08x_t * ic, bno_data_t * bno_data)
 void setup() {
   
   // SPI Configuration
-  bno1.bus = &SPI_0;
-  bno1.busType = BNO08X_SPI;
-  bno1.busAddr = BNO_SS;
+  bno.bus = &SPI_0;
+  bno.busType = BNO08X_SPI;
+  bno.busAddr = BNO_SS;
   
   // I2C Configuration
-  bno2.bus = &i2c1;
-  bno2.busType = BNO08X_I2C;
-  bno2.busAddr = BNO_ADDRESS;
+  bno.bus = &i2c1;
+  bno.busType = BNO08X_I2C;
+  bno.busAddr = BNO_ADDRESS;
+  /*
+  // UART Configuration
+  bno.bus = &uart2;
+  bno.busType = BNO08X_UART;
+  */
   
   // Shared Pin Configuration
   bno1.wakePin = BNO_PIN_WAKE_1;
@@ -179,11 +190,14 @@ void setup() {
 
   while (init1)
   {
-    init1 = bno08x_init(&bno1, 1000000);
+    init1 = bno08x_init(&bno1, 1000000); // UART must be 3Mbaud (3000000)
     switch(init1)
     {
       case 0:
         Serial.println("BNO1 Initialized Successfully");
+        break;
+      case 1:
+        Serial.println("Failed waiting for interrupt");
         break;
       case 2:
         Serial.println("Failed to Find I2C Device");
@@ -219,7 +233,7 @@ void setup() {
 
   while (init2)
   {
-    init2 = bno08x_init(&bno2, 400000);
+    init2 = bno08x_init(&bno2, 400000); // UART must be 3Mbaud (3000000)
     switch(init2)
     {
       case 0:
