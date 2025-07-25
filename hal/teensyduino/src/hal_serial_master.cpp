@@ -43,9 +43,12 @@ serial_handle_t uart7 = {.bus = &Serial7, .format = 0, .rxPin = 255, .txPin = 25
  * @brief Initialize and open a serial (UART) peripheral.
  * @param handle Pointer to serial handler. Handler should have configuration defined before calling this function.
  * @param speed Speed of operation of peripheral
+ * @return 0: Success
+ *  1: Timed out
  ****************************************************************************/
-void hal_serial_open(serial_handle_t *handle, uint32_t speed)
+uint8_t hal_serial_open(serial_handle_t *handle, uint32_t speed, uint8_t busType)
 {
+    handle->type = busType;
 
     if (handle->rxPin != 255) // Check if using alternate pin
         handle->bus->setRX(handle->rxPin);
@@ -66,6 +69,14 @@ void hal_serial_open(serial_handle_t *handle, uint32_t speed)
     }
 
     handle->bus->begin(speed, handle->format);
+
+    if (!handle->bus)
+        delay(250); // Give delay and try again
+
+    if (!handle->bus)
+        return 1; // Timeout
+
+    return 0;
 
 }
 

@@ -82,6 +82,10 @@ uint8_t report_length[] = {
     60 // 45
 };
 
+#ifdef UART_BUFFER_EXTRA
+static uint8_t uart_buff[192]; // Additional buffer for UART (not as much as we need but it's better than nothing)
+#endif
+
 /****************************************************************************
  * Static Function Declarations
  ****************************************************************************/
@@ -110,6 +114,7 @@ static uint8_t bno08x_feature_response(bno08x_t *);
 static uint8_t bno08x_ID_response(bno08x_t *);
 static uint8_t bno08x_flush_response(bno08x_t *);
 static uint8_t bno08x_frs_response(bno08x_t *);
+static void bno08x_bsn_response(bno08x_t *);
 
 /****************************************************************************
  * Utility Functions
@@ -221,7 +226,7 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
     gpio_write(handle->pinRst, HIGH);
 
     timer_blocking_delay(100000);
-    
+
     if(handle->busType == BNO08X_I2C)
     {
         i2c_open((i2c_handle_t*)handle->bus, speed);
@@ -245,24 +250,40 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
     }
     else if(handle->busType == BNO08X_UART)
     {
-        ; // To Do
+
+        handle->writeAvail = 0;
+
+        #ifdef UART_BUFFER_EXTRA
+        (serial_handle_t*)handle->bus.addMemoryForRead(uart_buff, 192);
+        #endif
+
+        if(serial_open((serial_handle_t*)handle->bus, speed, UART_TYPE_BASIC))
+            return 2;
+
+        gpio_write(handle->wakePin, GPIO_LOW); // Set P0 to Low
     }
 
     bno08x_hw_reset(handle);
-
+    
     gpio_write(handle->wakePin, GPIO_HIGH); // Ensure wake pin isn't asserted
-
-    if (bno08x_int_wait(handle))
-        return 1;
+    
+    if(handle->busType != BNO08X_UART) // Interrupt wait is working sporadically, likely caused by read buffer size being too small
+    {
+        if (bno08x_int_wait(handle))
+            return 1;
+    }
     
     if (bno08x_SHTP_startup(handle))
         return 3;
 
-    if (bno08x_hub_startup(handle))
-        return 4;    
+    if(handle->busType != BNO08X_UART)  // Downstream impact of buffer size - large size is only needed for SHTP, we can't read it all atm so it prevents proper segmentation from hub startup
+    {
+        if (bno08x_hub_startup(handle))
+            return 4;
+    }
 
     timer_handle_t gen_timer;
-    timer_init(&gen_timer, 250000); // 250ms
+    timer_init(&gen_timer, 2500000); // 250ms
     timer_start(&gen_timer);
 
     while (!handle->isRst) // Wait for execution channel reset complete response
@@ -404,7 +425,6 @@ static uint8_t bno08x_get_ID(bno08x_t *handle)
     timer_init(&gen_timer, 250000); // 250ms
     timer_start(&gen_timer);
 
-    
     while(bno08x_tx(handle, idCmd, sizeof(idCmd)))
     {        
         if (timer_check_exp(&gen_timer))
@@ -494,6 +514,7 @@ uint8_t bno08x_wake(bno08x_t *handle)
  *  1: Timed out
  *  2: Failed to write I2C
  *  3: Failed to allocate memory for temp buffer
+ *  4: Not enough buffer length for UART write
  ****************************************************************************/
 static uint8_t bno08x_tx(bno08x_t *handle, uint8_t *data, uint8_t bytes)
 {
@@ -571,7 +592,91 @@ static uint8_t bno08x_tx(bno08x_t *handle, uint8_t *data, uint8_t bytes)
 
     }
     else if(handle->busType == BNO08X_UART)
-        ;
+    {
+        // Format data to send
+        uint8_t flag = 0x7E;
+        uint8_t flagComp = 0; // Count of additional data to send if data needs to be modified if it contains a byte == flag (See SHTP Manual)
+
+        for (uint8_t p = 0; p < bytes; p++)
+        {
+            if (data[p+flagComp] == flag)
+            {
+                data[p+flagComp] = 0x7D;
+                flagComp++;
+                data[p+flagComp] = 0x5E;
+            }
+        }
+
+        // Create BSQ
+        uint8_t bsq[] = {flag, 0x00, flag};
+
+        if (handle->isSleep)
+        {
+            // Wake IC
+            gpio_write(handle->wakePin, GPIO_LOW);
+            timer_blocking_delay(50); // Wait min time for interrupt
+        }
+
+        handle->bsnResp = false;
+
+        timer_handle_t gen_timer;
+        timer_init(&gen_timer, 250000); // 250ms
+
+        // Send BSQ
+        for (uint8_t t = 0; t < 3; t++)
+        {
+            serial_write((serial_handle_t*)handle->bus, &bsq[t], 1);
+            timer_blocking_delay(100);
+        }
+
+        if (handle->isSleep)
+            gpio_write(handle->wakePin, GPIO_LOW);
+
+        timer_start(&gen_timer);
+
+        // Wait for BSN Response
+        while (!handle->bsnResp)
+        {
+            if (timer_check_exp(&gen_timer))
+                return 1;
+
+            bno08x_get_messages(handle);
+
+        }
+
+        if (handle->writeAvail == 0)
+            return 4;
+
+        if (handle->writeAvail < bytes + flagComp)
+            return 4;
+
+        if (handle->isSleep)
+        {
+            // Wake IC
+            gpio_write(handle->wakePin, GPIO_LOW);
+            timer_blocking_delay(50); // Wait min time for interrupt
+        }
+
+        uint8_t protocol = 0x01; // Protocol ID SHTP
+
+        serial_write((serial_handle_t*)handle->bus, &flag, 1); // Send Flag (start)
+        timer_blocking_delay(100); // Wait 100us between bytes per datasheet
+
+        serial_write((serial_handle_t*)handle->bus, &protocol, 1); // Send Prototcol ID
+        timer_blocking_delay(100); // Wait 100us between bytes per datasheet
+
+        for (uint8_t j = 0; j < bytes + flagComp; j++)
+        {
+            serial_write((serial_handle_t*)handle->bus, &data[j], 1); // Send data byte
+            timer_blocking_delay(100); // Wait 100us between bytes per datasheet
+        }
+
+        serial_write((serial_handle_t*)handle->bus, &flag, 1); // Send Flag (end)
+
+        if (handle->isSleep)
+            gpio_write(handle->wakePin, GPIO_HIGH);
+
+    }
 
     return 0;
 }
@@ -583,6 +688,7 @@ static uint8_t bno08x_tx(bno08x_t *handle, uint8_t *data, uint8_t bytes)
  *  1: Timed out
  *  2: Invalid Length (Likely unresponsive)
  *  3: Length is 0
+ *  4: Invalid UART start (!flag)
  ****************************************************************************/
 static uint8_t bno08x_rx(bno08x_t *handle)
 {
@@ -720,7 +826,110 @@ static uint8_t bno08x_rx(bno08x_t *handle)
 
     }
     else if(handle->busType == BNO08X_UART)
-        ;
+    {
+
+        /* SHTP over UART
+
+        0x7E (Flag Byte) is used to start/stop every frame
+        0x7D (Control Escape) is used when a data byte would be 0x7E to indicate it's not a flag byte -
+        If a data byte is 0x7E, 0x7D is sent followed by the data byte xor'd with 0x20 (so instead of 0x7E -> 0x7D, 0x5E)
+
+        Message structure:
+        0 - Flag
+        1 - Protocol ID
+        2 - N-1 - Data
+        N - Flag
+
+        Protocol ID:
+        0x00 - SHTP over UART Control
+        0x01 - SHTP (Data)
+
+        SHTP over UART Control:
+        Establish when it's safe for host to perform a write
+
+        Buffer Status Query (BSQ): Sent from host to hub to inquire available buffer size for writing
+        0 - Flag (0x7E)
+        1 - Protocol ID (0x00)
+        2 - Flag (0x7E)
+        
+
+        Buffer Status Notification (BSN): Sent from hub to host in response to BSQ. Bytes available are the cargo only
+        0 - Flag (0x7E)
+        1 - Protocol ID (0x00)
+        2 - Bytes Available LSB
+        3 - Bytes Available MSB
+        4 - Flag (0x7E)
+
+        Reads:
+        Can occur at any time. Hub will assert HINT before transmission and may deassert at any time during transmission.
+
+        Writes:
+        Must send BSQ and ensure BSN indicates enough buffer is available for write. Have to delay a minimum of 100us between bytes written.
+        
+        */
+        uint16_t j = 0;
+
+        timer_handle_t gen_timer;
+        timer_init(&gen_timer, 500000); // 500ms
+
+        // Check if BNO08x is asleep
+        if (handle->isSleep)
+        {
+            // Wake IC
+            gpio_write(handle->wakePin, GPIO_LOW);
+            timer_blocking_delay(50); // Wait min time for interrupt
+        }
+
+        // Check if BNO08x has data to send
+        /* Interrupt wait is working sporadically, likely caused by read buffer size being too small
+        if (bno08x_int_wait(handle))
+        {
+            if (handle->isSleep)
+                gpio_write(handle->wakePin, GPIO_HIGH);
+            
+            return 1;
+        }
+        */
+
+        // Read single byte
+        serial_read((serial_handle_t*)handle->bus, handle->buffer, 1);
+
+        if (handle->buffer[0] == 0x7E) // Check if it's a flag (start)
+        {
+
+            serial_read((serial_handle_t*)handle->bus, &handle->buffer[j], 1);
+
+            if (handle->buffer[j] == 0x7E) // Check for repeated flag on initial byte only
+                serial_read((serial_handle_t*)handle->bus, &handle->buffer[j], 1); // If so, read again for first byte
+
+            timer_start(&gen_timer);
+
+            while (handle->buffer[j] != 0x7E) // Read till end of message
+            {
+
+                if (timer_check_exp(&gen_timer))
+                    break;
+                
+                j++; // Increment to keep track on buffer
+
+                serial_read((serial_handle_t*)handle->bus, &handle->buffer[j], 1);
+
+            }
+            
+
+        }
+        else // Haven't received start message
+        {
+            if (handle->isSleep)
+                gpio_write(handle->wakePin, GPIO_HIGH);
+
+            return 4;
+        }
+
+        if (handle->isSleep)
+            gpio_write(handle->wakePin, GPIO_HIGH);
+
+    }
 
     return 0;
 
@@ -823,6 +1032,18 @@ static uint8_t bno08x_exec_request(bno08x_t *handle, uint8_t cmd)
  ****************************************************************************/
 static void bno08x_parse_message(bno08x_t *handle)
 {
+
+    if (handle->busType == BNO08X_UART)
+    {
+        if (handle->buffer[0] == 0) // SHTP over UART Control
+        {
+            bno08x_bsn_response(handle);
+            return;
+        }
+        else // SHTP with Protocol ID prepended
+            memmove(handle->buffer, handle->buffer + 1, sizeof(handle->buffer) - 1 * sizeof(uint8_t)); // Drop Protocol ID
+
+    }
 
     uint16_t length;
 
@@ -992,7 +1213,8 @@ static void bno08x_parse_message(bno08x_t *handle)
 void bno08x_get_messages(bno08x_t *handle)
 {
 
-    bno08x_rx(handle);
+    if (bno08x_rx(handle)) // This should fix UART but might blow up everything else
+        return;
 
     bno08x_parse_message(handle);
 
@@ -1053,6 +1275,19 @@ uint8_t bno08x_flush(bno08x_t *handle, uint8_t sensor)
  * Response Handlers
  ****************************************************************************/
 
+
+/****************************************************************************
+ * @brief Called by Parse Messages. Checks response of messages from executable channel.
+ * @param handle Handle for BNO08x chip.
+ ****************************************************************************/
+static void bno08x_bsn_response(bno08x_t *handle)
+{
+
+    handle->bsnResp = true; // Indicate received response
+
+    handle->writeAvail =  handle->buffer[1] | (handle->buffer[2] << 8); // Return bytes available
+
+}
 
 /****************************************************************************
  * @brief Called by Parse Messages. Checks response of messages from executable channel.

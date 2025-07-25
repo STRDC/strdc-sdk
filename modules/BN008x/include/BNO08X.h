@@ -33,6 +33,7 @@
 
 #include "i2c_master.h"
 #include "spi_master.h"
+#include "serial_master.h"
 #include "timer.h"
 #include "gpio.h"
 
@@ -394,6 +395,9 @@ typedef struct {
     bool flushComplete; // Notification that flush is complete
     bool frsResp; // Notification that an FRS Response was received
     bool isErr; // Notification that an Report Error Command Response was received
+    bool bsnResp; // Notification that a Buffer Status Notification was received (UART)
+
+    uint16_t writeAvail; // Bytes available for write - received from BSN (UART)
 
     uint8_t startCal; // Notification that interactive calibration has started
     uint8_t calStatus; // Status of interactive calibration
