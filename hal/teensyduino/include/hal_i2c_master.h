@@ -46,7 +46,7 @@ typedef struct {
 
 void hal_i2c_init(i2c_handle_t *, uint32_t);
 void hal_i2c_start(i2c_handle_t *, uint8_t);
-uint8_t hal_i2c_stop(i2c_handle_t *);
+uint8_t hal_i2c_stop(i2c_handle_t *, bool);
 uint8_t hal_i2c_read(i2c_handle_t *, uint8_t *, uint16_t);
 void hal_i2c_write(i2c_handle_t *, uint8_t *, uint8_t);
 void hal_i2c_close(i2c_handle_t *);

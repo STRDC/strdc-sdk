@@ -60,7 +60,7 @@ uint8_t i2c_find(i2c_handle_t *handle, uint8_t address)
 
     hal_i2c_start(handle, address);
 
-    while ((hal_i2c_stop(handle) != 0) && !timer_check_exp(&watchdog));
+    while ((hal_i2c_stop(handle, true) != 0) && !timer_check_exp(&watchdog));
 
     return watchdog.isExp; // 0 if found, 1 if timer expired
 
@@ -106,7 +106,7 @@ uint8_t i2c_write(i2c_handle_t *handle, uint8_t *data, uint8_t bytes)
 
     hal_i2c_start(handle, handle->curr_addr); // Start condition and send address
     hal_i2c_write(handle, data, bytes); // Write data of size bytes
-    success = hal_i2c_stop(handle); // Send stop condition
+    success = hal_i2c_stop(handle, true); // Send stop condition
 
     return success;
 
@@ -129,6 +129,7 @@ uint8_t i2c_read_reg(i2c_handle_t *handle, uint8_t *reg, uint8_t regBytes, uint8
 
     hal_i2c_start(handle, handle->curr_addr); // Start condition and send address
     hal_i2c_write(handle, reg, regBytes); // Write data of size regBytes
+    hal_i2c_stop(handle, false);
     success = i2c_read(handle, data, dataBytes); // Read data of size dataBytes
 
     return success;

@@ -105,7 +105,7 @@ void hal_serial_write(serial_handle_t *handle, uint8_t data)
  * @param handle Pointer to serial handler.
  * @return Number of bytes available for read.
  ****************************************************************************/
-uint8_t hal_serial_read_available(serial_handle_t *handle)
+uint16_t hal_serial_read_available(serial_handle_t *handle)
 {
     return handle->bus->available();
 }
@@ -118,6 +118,30 @@ uint8_t hal_serial_read_available(serial_handle_t *handle)
 uint8_t hal_serial_peek(serial_handle_t *handle)
 {
     return handle->bus->peek();
+}
+
+/****************************************************************************
+ * @brief Add additional memory to serial read buffer
+ * @param buffer Pointer to array of bytes for additional buffer location.
+ * @param bytes Length of additional buffer array (buffer).
+ ****************************************************************************/
+void hal_serial_buffer_read_add(serial_handle_t *handle, uint8_t *buffer, size_t length)
+{
+    
+    handle->bus->addMemoryForRead(buffer, length);
+
+}
+
+/****************************************************************************
+ * @brief Add additional memory to serial write buffer
+ * @param buffer Pointer to array of bytes for additional buffer location.
+ * @param bytes Length of additional buffer array (buffer).
+ ****************************************************************************/
+void hal_serial_buffer_write_add(serial_handle_t *handle, uint8_t *buffer, size_t length)
+{
+    
+    handle->bus->addMemoryForWrite(buffer, length);
+
 }
 
 /****************************************************************************
