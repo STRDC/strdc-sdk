@@ -55,8 +55,10 @@ typedef struct {
 uint8_t hal_serial_open(serial_handle_t *, uint32_t, uint8_t);
 uint8_t hal_serial_read(serial_handle_t *);
 void hal_serial_write(serial_handle_t *, uint8_t);
-uint8_t hal_serial_read_available(serial_handle_t *);
+uint16_t hal_serial_read_available(serial_handle_t *);
 uint8_t hal_serial_peek(serial_handle_t *);
+void hal_serial_buffer_read_add(serial_handle_t *, uint8_t *, size_t);
+void hal_serial_buffer_write_add(serial_handle_t *, uint8_t *, size_t);
 void hal_serial_clear(serial_handle_t *);
 size_t hal_serial_write_available(serial_handle_t *);
 void hal_serial_close(serial_handle_t *);

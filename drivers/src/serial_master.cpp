@@ -77,6 +77,18 @@ uint8_t serial_read(serial_handle_t *handle, uint8_t *data, uint16_t bytes)
 }
 
 /****************************************************************************
+ * @brief Return number of bytes in serial read buffer
+ * @param handle Pointer to serial handler.
+ * @return Number of bytes available to read
+ ****************************************************************************/
+uint16_t serial_read_available(serial_handle_t *handle)
+{
+
+    return hal_serial_read_available(handle);
+
+}
+
+/****************************************************************************
  * @brief Read next byte in buffer without removing it.
  * @param handle Pointer to serial handler.
  * @return Next data byte in buffer for read. Returns -1 if no data.
@@ -108,6 +120,30 @@ void serial_write(serial_handle_t *handle, uint8_t *data, uint16_t bytes)
         if ((i % avail == 0) && (i > 0)) // Ensure we don't overload buffer
             hal_serial_flush(handle); // Wait for buffer to clear
     }
+
+}
+
+/****************************************************************************
+ * @brief Add additional memory to serial read buffer
+ * @param buffer Pointer to array of bytes for additional buffer location.
+ * @param bytes Length of additional buffer array (buffer).
+ ****************************************************************************/
+void serial_buffer_read_add(serial_handle_t *handle, uint8_t *buffer, size_t length)
+{
+    
+    hal_serial_buffer_read_add(handle, buffer, length);
+
+}
+
+/****************************************************************************
+ * @brief Add additional memory to serial write buffer
+ * @param buffer Pointer to array of bytes for additional buffer location.
+ * @param bytes Length of additional buffer array (buffer).
+ ****************************************************************************/
+void serial_buffer_write_add(serial_handle_t *handle, uint8_t *buffer, size_t length)
+{
+    
+    hal_serial_buffer_write_add(handle, buffer, length);
 
 }
 
