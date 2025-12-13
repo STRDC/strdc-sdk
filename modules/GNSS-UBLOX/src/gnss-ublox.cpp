@@ -34,7 +34,6 @@
 #include <math.h>
 
 
-
 //#define DEBUG
 
 #ifdef DEBUG
@@ -56,6 +55,7 @@ static uint8_t gnss_tx(gnss_t *, uint8_t *, uint8_t);
 static uint8_t gnss_ubx_msg(gnss_t *, uint8_t, uint8_t, uint16_t, uint8_t *, bool);
 static uint8_t gnss_nmea_msg(gnss_t *, uint8_t, uint16_t);
 static uint8_t gnss_pubx_msg(gnss_t *, uint8_t *, uint8_t);
+static uint8_t gnss_parse_buffer(gnss_t *);
 static uint16_t gnss_find_msg_start(uint8_t *, uint16_t, uint16_t);
 static uint16_t gnss_find_msg_end(gnss_t *, uint16_t, uint16_t);
 static uint8_t gnss_ascii_data(uint8_t);
@@ -134,6 +134,17 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
         i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr);
 
     }
+    else if(handle->busType == GNSS_SPI)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Init SPI");
+        #endif
+
+        if (speed > 5500000)
+            speed = 5500000; // Max speed is 5.5 MHz
+
+        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_0, SPI_BIT_ORDER_MSB);
+    }
     else if(handle->busType == GNSS_UART)
     {
         #ifdef DEBUG
@@ -210,6 +221,8 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
     handle->ubxTimTp = NULL;
     handle->ubxTimVrfy = NULL;
     handle->ubxLogBatch = NULL;
+    handle->ubxLogFindtime = NULL;
+    handle->ubxLogInfo = NULL;
     handle->ubxMonBatch = NULL;
     handle->ubxMonComms = NULL;
     handle->ubxMonGnss = NULL;
@@ -3374,26 +3387,102 @@ uint8_t gnss_set_nav_rate(gnss_t *handle, uint16_t meas, uint16_t soln, uint8_t 
  * @param polarity 0: active high, 1: active low.
  * @param threshold Threshold of 8 bytes to trigger TXREADY. Number of 8 bytes, so a value of 5 = 40 byte threshold. Should not be set above 256 8-byte chunks
  * @param interface 0: I2C, 1: SPI
+ * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  * @note Does not reenable previously disabled primary function upon making a new selection.
  ****************************************************************************/
-uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t threshold, uint8_t interface)
+uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t threshold, uint8_t interface, uint8_t chip)
 {
 
     /*
-        Pin number as specified in datasheet as PIO no.:
+        Pin number as specified by UBX-MON-HW3 as PIO no. (SAM-M10Q):
         0: RXD
         1: TXD
         2: SDA
         3: SCL
         4: TIMEPULSE
         5: EXTINT
+
+        Pin number as specified by UBX-MON-HW3 as PIO no. (NEO-M9N):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        5: TIMEPULSE
+        6: SAFEBOOT_N
+        7: EXTINT
+        8: Reserved (Pin 15)
+        15: Reserved (Pin 16)
+        16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (NEO-M9V):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        6: TIMEPULSE
+        8: EXTINT/Wheel Tick
+        16: LNA_EN
     */
+
+    bool uart = false;
+    bool i2c = false;
+    bool spi = false;
+    bool timepulse = false;
+    bool extint = false;
+
+    if (chip == GNSS_SAM_M10Q)
+    {
+        if ((pin == 0) || (pin == 1))
+            uart = true;
+        else if ((pin == 2) || (pin == 3))
+            i2c = true;
+        else if (pin == 4)
+            timepulse = true;
+        else if (pin == 5)
+            extint = true;
+    }
+    else if (chip == GNSS_NEO_M9N)
+    {
+        if ((pin == 1) || (pin == 2))
+        {
+            uart = true;
+            spi = true;
+        }
+        else if ((pin == 3) || (pin == 4))
+        {
+            i2c = true;
+            spi = true;
+        }
+        else if (pin == 5)
+            timepulse = true;
+        else if (pin == 7)
+            extint = true;
+    }
+    else if (chip == GNSS_NEO_M9V)
+    {
+        if ((pin == 1) || (pin == 2))
+            {
+            uart = true;
+            spi = true;
+        }
+        else if ((pin == 3) || (pin == 4))
+        {
+            i2c = true;
+            spi = true;
+        }
+        else if (pin == 6)
+            timepulse = true;
+        else if (pin == 8)
+            extint = true;
+    }
 
     uint8_t dat;
 
-    if ((pin == 0) || (pin == 1))
+    if (uart)
     {
         // If pin is part of UART, disable UART pins per datasheet
 
@@ -3409,7 +3498,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
 
     }
 
-    else if ((pin == 2) || (pin == 3))
+    else if (i2c)
     {
         // If pin is part of I2C, disable I2C pins per datasheet
 
@@ -3424,51 +3513,98 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
         }
 
     }
+
+    else if (spi)
+    {
+        // If pin is part of SPI, disable SPI pins per datasheet
+
+        dat = 0x00;
+        // CFG-SPI-ENABLED
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SPI_ENABLED, &dat, 1))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to disable SPI peripheral");
+            #endif
+            return 1;
+        }
+
+    }
     
-    else if (pin == 4)
+    else if (timepulse)
     {
         // If pin is part of TIMEPULSE, disable TIMEPULSE pin per datasheet
 
         dat = 0x00;
-        // CFG-TP-TP1-ENA
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, &dat, 1))
+
+        if (chip == GNSS_NEO_M9V)
         {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
-            #endif
-            return 1;
+            // CFG-TP-TP2-ENA
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                #endif
+                return 1;
+            }
+        }
+        else
+        {
+            // CFG-TP-TP1-ENA
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                #endif
+                return 1;
+            }
         }
         
     }
     
-    else if (pin == 5)
+    else if (extint)
     {
         // If pin is part of EXTINT, disable EXTINT pin per datasheet
 
-        dat = 0x00;
-        // CFG-PM-EXTINTWAKE
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTWAKE, &dat, 1))
+        if (chip == GNSS_NEO_M9V)
         {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable EXTINT Wake functionality");
-            #endif
-            return 1;
+            dat = 0x00;
+
+            // CFG-SFODO-USE_WT_PIN
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SFODO_USE_WT_PIN, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable Wheel Tick functionality");
+                #endif
+                return 1;
+            }
         }
-        // CFG-PM-BACKUP
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTBACKUP, &dat, 1))
+        else
         {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable EXTINT Backup functionality");
-            #endif
-            return 1;
-        }
-        // CFG-PM-INACTIVE
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTINACTIVE, &dat, 1))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable EXTINT Inactive functionality");
-            #endif
-            return 1;
+            dat = 0x00;
+            // CFG-PM-EXTINTWAKE
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTWAKE, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable EXTINT Wake functionality");
+                #endif
+                return 1;
+            }
+            // CFG-PM-BACKUP
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTBACKUP, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable EXTINT Backup functionality");
+                #endif
+                return 1;
+            }
+            // CFG-PM-INACTIVE
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTINACTIVE, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable EXTINT Inactive functionality");
+                #endif
+                return 1;
+            }
         }
         
     }
@@ -3528,34 +3664,108 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
 }
 
 /****************************************************************************
- * @brief Enable TXREADY functionality on ublox gnss module. Will automatically disable primary function of peripheral for selected pin.
+ * @brief Set CFG-BATCH for batch messaging functionality
  * @param handle Handle for ublox gnss module.
- * @param pin PIO number of pin to use for TXREADY.
- * @param polarity 0: active high, 1: active low.
- * @param threshold Threshold of 8 bytes to trigger TXREADY. Number of 8 bytes, so a value of 5 = 40 byte threshold. Should not be set above 256 8-byte chunks
- * @param interface 0: I2C, 1: SPI
+ * @param batchCfg Pointer to Batch Configuration Object
+ * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  * 2: Failed to allocate memory for messages
  * @note Does not reenable previously disabled primary function upon making a new selection.
  ****************************************************************************/
-uint8_t gnss_update_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
+uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
 {
 
     /*
-        Pin number as specified in datasheet as PIO no.:
+        Pin number as specified by UBX-MON-HW3 as PIO no. (SAM-M10Q):
         0: RXD
         1: TXD
         2: SDA
         3: SCL
         4: TIMEPULSE
         5: EXTINT
+
+        Pin number as specified by UBX-MON-HW3 as PIO no. (NEO-M9N):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        5: TIMEPULSE
+        6: SAFEBOOT_N
+        7: EXTINT
+        8: Reserved (Pin 15)
+        15: Reserved (Pin 16)
+        16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (NEO-M9V):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        6: TIMEPULSE
+        8: EXTINT/Wheel Tick
+        16: LNA_EN
     */
 
     uint8_t data[2];
     if (batchCfg->pioEnable)
     {
-        if ((batchCfg->pioID == 0) || (batchCfg->pioID == 1))
+
+        bool uart = false;
+        bool i2c = false;
+        bool spi = false;
+        bool timepulse = false;
+        bool extint = false;
+
+        if (chip == GNSS_SAM_M10Q)
+        {
+            if ((batchCfg->pioID == 0) || (batchCfg->pioID == 1))
+                uart = true;
+            else if ((batchCfg->pioID == 2) || (batchCfg->pioID == 3))
+                i2c = true;
+            else if (batchCfg->pioID == 4)
+                timepulse = true;
+            else if (batchCfg->pioID == 5)
+                extint = true;
+        }
+        else if (chip == GNSS_NEO_M9N)
+        {
+            if ((batchCfg->pioID == 1) || (batchCfg->pioID == 2))
+            {
+                uart = true;
+                spi = true;
+            }
+            else if ((batchCfg->pioID == 3) || (batchCfg->pioID == 4))
+            {
+                i2c = true;
+                spi = true;
+            }
+            else if (batchCfg->pioID == 5)
+                timepulse = true;
+            else if (batchCfg->pioID == 7)
+                extint = true;
+        }
+        else if (chip == GNSS_NEO_M9V)
+        {
+            if ((batchCfg->pioID == 1) || (batchCfg->pioID == 2))
+                {
+                uart = true;
+                spi = true;
+            }
+            else if ((batchCfg->pioID == 3) || (batchCfg->pioID == 4))
+            {
+                i2c = true;
+                spi = true;
+            }
+            else if (batchCfg->pioID == 6)
+                timepulse = true;
+            else if (batchCfg->pioID == 8)
+                extint = true;
+        }
+
+        if (uart)
         {
             // If pin is part of UART, disable UART pins per datasheet
 
@@ -3571,7 +3781,7 @@ uint8_t gnss_update_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
 
         }
 
-        else if ((batchCfg->pioID == 2) || (batchCfg->pioID == 3))
+        else if (i2c)
         {
             // If pin is part of I2C, disable I2C pins per datasheet
 
@@ -3586,64 +3796,101 @@ uint8_t gnss_update_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
             }
 
         }
+
+        else if (spi)
+        {
+            // If pin is part of SPI, disable SPI pins per datasheet
+
+            data[0] = 0x00;
+            // CFG-SPI-ENABLED
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SPI_ENABLED, data, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable SPI peripheral");
+                #endif
+                return 1;
+            }
+
+        }
         
-        else if (batchCfg->pioID == 4)
+        else if (timepulse)
         {
             // If pin is part of TIMEPULSE, disable TIMEPULSE pin per datasheet
 
             data[0] = 0x00;
-            // CFG-TP-TP1-ENA
-            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, data, 1))
+            if (chip == GNSS_NEO_M9V)
             {
-                #ifdef DEBUG
-                Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
-                #endif
-                return 1;
+                // CFG-TP-TP2-ENA
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                    #endif
+                    return 1;
+                }
+            }
+            else
+            {
+                // CFG-TP-TP1-ENA
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                    #endif
+                    return 1;
+                }
             }
             
         }
         
-        else if (batchCfg->pioID == 5)
+        else if (extint)
         {
             // If pin is part of EXTINT, disable EXTINT pin per datasheet
-
-            data[0] = 0x00;
-            // CFG-PM-EXTINTWAKE
-            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTWAKE, data, 1))
-            {
-                #ifdef DEBUG
-                Serial.println("[DEBUG] Failed to disable EXTINT Wake functionality");
-                #endif
-                return 1;
-            }
-            // CFG-PM-BACKUP
-            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTBACKUP, data, 1))
-            {
-                #ifdef DEBUG
-                Serial.println("[DEBUG] Failed to disable EXTINT Backup functionality");
-                #endif
-                return 1;
-            }
-            // CFG-PM-INACTIVE
-            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTINACTIVE, data, 1))
-            {
-                #ifdef DEBUG
-                Serial.println("[DEBUG] Failed to disable EXTINT Inactive functionality");
-                #endif
-                return 1;
-            }
             
+            if (chip == GNSS_NEO_M9V)
+            {
+                data[0] = 0x00;
+
+                // CFG-SFODO-USE_WT_PIN
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SFODO_USE_WT_PIN, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable Wheel Tick functionality");
+                    #endif
+                    return 1;
+                }
+            }
+            else
+            {
+                data[0] = 0x00;
+                // CFG-PM-EXTINTWAKE
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTWAKE, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Wake functionality");
+                    #endif
+                    return 1;
+                }
+                // CFG-PM-BACKUP
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTBACKUP, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Backup functionality");
+                    #endif
+                    return 1;
+                }
+                // CFG-PM-INACTIVE
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTINACTIVE, data, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Inactive functionality");
+                    #endif
+                    return 1;
+                }
+            }
+
         }
-    }
-    
-    data[0] = batchCfg->enable;
-    // CFG-BATCH-ENABLE
-    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_BATCH_ENABLE, data, 1))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to enable BATCH");
-        #endif
-        return 1;
+
     }
 
     data[0] = batchCfg->pioEnable;
@@ -3717,6 +3964,16 @@ uint8_t gnss_update_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
         #endif
         return 1;
     }
+
+    data[0] = batchCfg->enable;
+    // CFG-BATCH-ENABLE
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_BATCH_ENABLE, data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to enable BATCH");
+        #endif
+        return 1;
+    }
     
     // Allocate memory for UBX-MON-BATCH
     if (handle->ubxMonBatch == NULL)
@@ -3767,13 +4024,14 @@ uint8_t gnss_update_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
 }
 
 /****************************************************************************
- * @brief Update Time Pulse Configuration
+ * @brief Set Time Pulse Configuration
  * @param handle Handle for ublox gnss module.
  * @param pulseCfg Pointer to Time Pulse Configuration Object
+ * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  ****************************************************************************/
-uint8_t gnss_update_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg)
+uint8_t gnss_set_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg, uint8_t chip)
 {
 
     // Write Values
@@ -3808,174 +4066,352 @@ uint8_t gnss_update_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg)
         return 1;
     }
 
-    data[0] = pulseCfg->period & 0xFF;
-    data[1] = (pulseCfg->period >> 8) & 0xFF;
-    data[2] = (pulseCfg->period >> 16) & 0xFF;
-    data[3] = (pulseCfg->period >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_TP1, data, 0x04))
+    if (chip == GNSS_NEO_M9V)
     {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_TP1");
-        #endif
-        return 1;
-    }
 
-    data[0] = pulseCfg->periodLock & 0xFF;
-    data[1] = (pulseCfg->periodLock >> 8) & 0xFF;
-    data[2] = (pulseCfg->periodLock >> 16) & 0xFF;
-    data[3] = (pulseCfg->periodLock >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_LOCK_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_LOCK_TP1");
-        #endif
-        return 1;
-    }
+            data[0] = pulseCfg->period & 0xFF;
+        data[1] = (pulseCfg->period >> 8) & 0xFF;
+        data[2] = (pulseCfg->period >> 16) & 0xFF;
+        data[3] = (pulseCfg->period >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->freq & 0xFF;
-    data[1] = (pulseCfg->freq >> 8) & 0xFF;
-    data[2] = (pulseCfg->freq >> 16) & 0xFF;
-    data[3] = (pulseCfg->freq >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->periodLock & 0xFF;
+        data[1] = (pulseCfg->periodLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->periodLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->periodLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_LOCK_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_LOCK_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->freqLock & 0xFF;
-    data[1] = (pulseCfg->freqLock >> 8) & 0xFF;
-    data[2] = (pulseCfg->freqLock >> 16) & 0xFF;
-    data[3] = (pulseCfg->freqLock >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_LOCK_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_LOCK_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->freq & 0xFF;
+        data[1] = (pulseCfg->freq >> 8) & 0xFF;
+        data[2] = (pulseCfg->freq >> 16) & 0xFF;
+        data[3] = (pulseCfg->freq >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->pulseLength & 0xFF;
-    data[1] = (pulseCfg->pulseLength >> 8) & 0xFF;
-    data[2] = (pulseCfg->pulseLength >> 16) & 0xFF;
-    data[3] = (pulseCfg->pulseLength >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-LEN_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->freqLock & 0xFF;
+        data[1] = (pulseCfg->freqLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->freqLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->freqLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_LOCK_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_LOCK_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->pulseLengthLock & 0xFF;
-    data[1] = (pulseCfg->pulseLengthLock >> 8) & 0xFF;
-    data[2] = (pulseCfg->pulseLengthLock >> 16) & 0xFF;
-    data[3] = (pulseCfg->pulseLengthLock >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_LOCK_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-LEN_LOCK_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->pulseLength & 0xFF;
+        data[1] = (pulseCfg->pulseLength >> 8) & 0xFF;
+        data[2] = (pulseCfg->pulseLength >> 16) & 0xFF;
+        data[3] = (pulseCfg->pulseLength >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-LEN_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = ((uint64_t)pulseCfg->duty >> 56) & 0xFF;
-    data[1] = ((uint64_t)pulseCfg->duty >> 48) & 0xFF;
-    data[2] = ((uint64_t)pulseCfg->duty >> 40) & 0xFF;
-    data[3] = ((uint64_t)pulseCfg->duty >> 32) & 0xFF;
-    data[4] = ((uint64_t)pulseCfg->duty >> 24) & 0xFF;
-    data[5] = ((uint64_t)pulseCfg->duty >> 16) & 0xFF;
-    data[6] = ((uint64_t)pulseCfg->duty >> 8) & 0xFF;
-    data[7] = (uint64_t)pulseCfg->duty & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_TP1, data, 0x08))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->pulseLengthLock & 0xFF;
+        data[1] = (pulseCfg->pulseLengthLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->pulseLengthLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->pulseLengthLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_LOCK_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-LEN_LOCK_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = ((uint64_t)pulseCfg->dutyLock >> 56) & 0xFF;
-    data[1] = ((uint64_t)pulseCfg->dutyLock >> 48) & 0xFF;
-    data[2] = ((uint64_t)pulseCfg->dutyLock >> 40) & 0xFF;
-    data[3] = ((uint64_t)pulseCfg->dutyLock >> 32) & 0xFF;
-    data[4] = ((uint64_t)pulseCfg->dutyLock >> 24) & 0xFF;
-    data[5] = ((uint64_t)pulseCfg->dutyLock >> 16) & 0xFF;
-    data[6] = ((uint64_t)pulseCfg->dutyLock >> 8) & 0xFF;
-    data[7] = (uint64_t)pulseCfg->dutyLock & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_LOCK_TP1, data, 0x08))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_LOCK_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = ((uint64_t)pulseCfg->duty >> 56) & 0xFF;
+        data[1] = ((uint64_t)pulseCfg->duty >> 48) & 0xFF;
+        data[2] = ((uint64_t)pulseCfg->duty >> 40) & 0xFF;
+        data[3] = ((uint64_t)pulseCfg->duty >> 32) & 0xFF;
+        data[4] = ((uint64_t)pulseCfg->duty >> 24) & 0xFF;
+        data[5] = ((uint64_t)pulseCfg->duty >> 16) & 0xFF;
+        data[6] = ((uint64_t)pulseCfg->duty >> 8) & 0xFF;
+        data[7] = (uint64_t)pulseCfg->duty & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_TP2, data, 0x08))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->userDelay & 0xFF;
-    data[1] = (pulseCfg->userDelay >> 8) & 0xFF;
-    data[2] = (pulseCfg->userDelay >> 16) & 0xFF;
-    data[3] = (pulseCfg->userDelay >> 24) & 0xFF;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USER_DELAY_TP1, data, 0x04))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-USER_DELAY_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = ((uint64_t)pulseCfg->dutyLock >> 56) & 0xFF;
+        data[1] = ((uint64_t)pulseCfg->dutyLock >> 48) & 0xFF;
+        data[2] = ((uint64_t)pulseCfg->dutyLock >> 40) & 0xFF;
+        data[3] = ((uint64_t)pulseCfg->dutyLock >> 32) & 0xFF;
+        data[4] = ((uint64_t)pulseCfg->dutyLock >> 24) & 0xFF;
+        data[5] = ((uint64_t)pulseCfg->dutyLock >> 16) & 0xFF;
+        data[6] = ((uint64_t)pulseCfg->dutyLock >> 8) & 0xFF;
+        data[7] = (uint64_t)pulseCfg->dutyLock & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_LOCK_TP2, data, 0x08))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_LOCK_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->enable;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, data, 0x01))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-TP1_ENA");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->userDelay & 0xFF;
+        data[1] = (pulseCfg->userDelay >> 8) & 0xFF;
+        data[2] = (pulseCfg->userDelay >> 16) & 0xFF;
+        data[3] = (pulseCfg->userDelay >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USER_DELAY_TP2, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-USER_DELAY_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->syncGnss;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_SYNC_GNSS_TP1, data, 0x01))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-SYNC_GNSS_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->enable;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-TP2_ENA");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->useLocked;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USE_LOCKED_TP1, data, 0x01))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-USE_LOCKED_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->syncGnss;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_SYNC_GNSS_TP2, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-SYNC_GNSS_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->alignTOW;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_ALIGN_TO_TOW_TP1, data, 0x01))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-ALIGN_TO_TOW_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->useLocked;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USE_LOCKED_TP2, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-USE_LOCKED_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->polarity;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_POL_TP1, data, 0x01))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-POL_TP1");
-        #endif
-        return 1;
-    }
+        data[0] = pulseCfg->alignTOW;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_ALIGN_TO_TOW_TP2, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-ALIGN_TO_TOW_TP2");
+            #endif
+            return 1;
+        }
 
-    data[0] = pulseCfg->timeGrid;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TIMEGRID_TP1, data, 0x01))
+        data[0] = pulseCfg->polarity;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_POL_TP2, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-POL_TP2");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->timeGrid;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TIMEGRID_TP2, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-TIMEGRID_TP2");
+            #endif
+            return 1;
+        }
+
+    }
+    else
     {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-TP-TIMEGRID_TP1");
-        #endif
-        return 1;
+
+        data[0] = pulseCfg->period & 0xFF;
+        data[1] = (pulseCfg->period >> 8) & 0xFF;
+        data[2] = (pulseCfg->period >> 16) & 0xFF;
+        data[3] = (pulseCfg->period >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->periodLock & 0xFF;
+        data[1] = (pulseCfg->periodLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->periodLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->periodLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_PERIOD_LOCK_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-PERIOD_LOCK_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->freq & 0xFF;
+        data[1] = (pulseCfg->freq >> 8) & 0xFF;
+        data[2] = (pulseCfg->freq >> 16) & 0xFF;
+        data[3] = (pulseCfg->freq >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->freqLock & 0xFF;
+        data[1] = (pulseCfg->freqLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->freqLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->freqLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_FREQ_LOCK_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-FREQ_LOCK_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->pulseLength & 0xFF;
+        data[1] = (pulseCfg->pulseLength >> 8) & 0xFF;
+        data[2] = (pulseCfg->pulseLength >> 16) & 0xFF;
+        data[3] = (pulseCfg->pulseLength >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-LEN_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->pulseLengthLock & 0xFF;
+        data[1] = (pulseCfg->pulseLengthLock >> 8) & 0xFF;
+        data[2] = (pulseCfg->pulseLengthLock >> 16) & 0xFF;
+        data[3] = (pulseCfg->pulseLengthLock >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_LEN_LOCK_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-LEN_LOCK_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = ((uint64_t)pulseCfg->duty >> 56) & 0xFF;
+        data[1] = ((uint64_t)pulseCfg->duty >> 48) & 0xFF;
+        data[2] = ((uint64_t)pulseCfg->duty >> 40) & 0xFF;
+        data[3] = ((uint64_t)pulseCfg->duty >> 32) & 0xFF;
+        data[4] = ((uint64_t)pulseCfg->duty >> 24) & 0xFF;
+        data[5] = ((uint64_t)pulseCfg->duty >> 16) & 0xFF;
+        data[6] = ((uint64_t)pulseCfg->duty >> 8) & 0xFF;
+        data[7] = (uint64_t)pulseCfg->duty & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_TP1, data, 0x08))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = ((uint64_t)pulseCfg->dutyLock >> 56) & 0xFF;
+        data[1] = ((uint64_t)pulseCfg->dutyLock >> 48) & 0xFF;
+        data[2] = ((uint64_t)pulseCfg->dutyLock >> 40) & 0xFF;
+        data[3] = ((uint64_t)pulseCfg->dutyLock >> 32) & 0xFF;
+        data[4] = ((uint64_t)pulseCfg->dutyLock >> 24) & 0xFF;
+        data[5] = ((uint64_t)pulseCfg->dutyLock >> 16) & 0xFF;
+        data[6] = ((uint64_t)pulseCfg->dutyLock >> 8) & 0xFF;
+        data[7] = (uint64_t)pulseCfg->dutyLock & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_DUTY_LOCK_TP1, data, 0x08))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-DUTY_LOCK_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->userDelay & 0xFF;
+        data[1] = (pulseCfg->userDelay >> 8) & 0xFF;
+        data[2] = (pulseCfg->userDelay >> 16) & 0xFF;
+        data[3] = (pulseCfg->userDelay >> 24) & 0xFF;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USER_DELAY_TP1, data, 0x04))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-USER_DELAY_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->enable;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-TP1_ENA");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->syncGnss;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_SYNC_GNSS_TP1, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-SYNC_GNSS_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->useLocked;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_USE_LOCKED_TP1, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-USE_LOCKED_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->alignTOW;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_ALIGN_TO_TOW_TP1, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-ALIGN_TO_TOW_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->polarity;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_POL_TP1, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-POL_TP1");
+            #endif
+            return 1;
+        }
+
+        data[0] = pulseCfg->timeGrid;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TIMEGRID_TP1, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-TP-TIMEGRID_TP1");
+            #endif
+            return 1;
+        }
     }
 
     return 0;
@@ -3983,13 +4419,14 @@ uint8_t gnss_update_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg)
 }
 
 /****************************************************************************
- * @brief Update Power Save Mode Configuration
+ * @brief Set Power Save Mode Configuration
  * @param handle Handle for ublox gnss module.
  * @param psmCfg Pointer to Power Save Mode Configuration Object
+ * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  ****************************************************************************/
-uint8_t gnss_update_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg)
+uint8_t gnss_set_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg, uint8_t chip)
 {
 
     // Write Values
@@ -4138,13 +4575,16 @@ uint8_t gnss_update_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg)
         return 1;
     }
     
-    data[0] = psmCfg->extIntSel;
-    if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTSEL, data, 0x01))
+    if ((chip == GNSS_NEO_M9N) || (chip == GNSS_NEO_M9V))
     {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Failed to write CFG-PM-EXTINTSEL");
-        #endif
-        return 1;
+        data[0] = psmCfg->extIntSel;
+        if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTSEL, data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to write CFG-PM-EXTINTSEL");
+            #endif
+            return 1;
+        }
     }
     
     data[0] = psmCfg->extIntWake;
@@ -4216,7 +4656,7 @@ uint8_t gnss_update_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg)
  * 1: Failed to set configuration data
  * 2: Invalid signal configuration data
  ****************************************************************************/
-uint8_t gnss_update_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
+uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
 {
 
     /*
@@ -4858,6 +5298,601 @@ uint8_t gnss_set_uart_baud(gnss_t *handle, uint32_t baud)
 
 }
 
+/****************************************************************************
+ * @brief Set Logging Configuration
+ * @param handle Handle for ublox gnss module.
+ * @param psmCfg Pointer to Logging Configuration Object
+ * @return 0: Success
+ * 1: Failed to set configuration data
+ ****************************************************************************/
+uint8_t gnss_set_logging(gnss_t *handle, gnss_log_cfg_t *logCfg)
+{
+
+    uint8_t filters = 0;
+    uint8_t data[4];
+
+    if (logCfg->psmPerWake != 0)
+        filters = 1;
+
+    data[0] = logCfg->psmPerWake;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_ONCE_PER_WAKE_UP_ENA, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER-ONCE_PER_WAKE_UP_ENA");
+        #endif
+        return 1;
+    }
+
+    if (logCfg->minInterval != 0)
+        filters = 1;
+
+    data[0] = logCfg->minInterval & 0xFF;
+    data[1] = (logCfg->minInterval >> 8) & 0xFF;
+    data[2] = (logCfg->minInterval >> 16) & 0xFF;
+    data[3] = (logCfg->minInterval >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_MIN_INTERVAL, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER_MIN_INTERVAL");
+        #endif
+        return 1;
+    }
+
+    if (logCfg->timeThreshold != 0)
+        filters = 1;
+
+    data[0] = logCfg->timeThreshold & 0xFF;
+    data[1] = (logCfg->timeThreshold >> 8) & 0xFF;
+    data[2] = (logCfg->timeThreshold >> 16) & 0xFF;
+    data[3] = (logCfg->timeThreshold >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_TIME_THRS, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER_TIME_THRS");
+        #endif
+        return 1;
+    }
+
+    if (logCfg->speedThreshold != 0)
+        filters = 1;
+
+    data[0] = logCfg->speedThreshold & 0xFF;
+    data[1] = (logCfg->speedThreshold >> 8) & 0xFF;
+    data[2] = (logCfg->speedThreshold >> 16) & 0xFF;
+    data[3] = (logCfg->speedThreshold >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_SPEED_THRS, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER_SPEED_THRS");
+        #endif
+        return 1;
+    }
+
+    if (logCfg->posThreshold != 0)
+        filters = 1;
+
+    data[0] = logCfg->posThreshold & 0xFF;
+    data[1] = (logCfg->posThreshold >> 8) & 0xFF;
+    data[2] = (logCfg->posThreshold >> 16) & 0xFF;
+    data[3] = (logCfg->posThreshold >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_POSITION_THRS, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER_POSITION_THRS");
+        #endif
+        return 1;
+    }
+
+    // Set Apply All Filters if necessary
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_APPLY_ALL_FILTERS, &filters, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER-APPLY_ALL_FILTERS");
+        #endif
+        return 1;
+    }
+
+    data[0] = logCfg->enable;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_LOGFILTER_RECORD_ENA, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-LOGFILTER_RECORD_ENA");
+        #endif
+        return 1;
+    }
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Set Geofencing Configuration
+ * @param handle Handle for ublox gnss module.
+ * @param geoCfg Pointer to Geofencing Configuration Object
+ * @param chip Ublox product used - necessary to auto-disable the correct function
+ * @return 0: Success
+ * 1: Failed to set configuration data
+ * 2: Invalid Geofence Confidence Level
+ ****************************************************************************/
+uint8_t gnss_set_geofencing(gnss_t *handle, gnss_geofence_cfg_t *geoCfg, uint8_t chip)
+{
+
+    /*
+        Pin number as specified by UBX-MON-HW3 as PIO no. (SAM-M10Q):
+        0: RXD
+        1: TXD
+        2: SDA
+        3: SCL
+        4: TIMEPULSE
+        5: EXTINT
+
+        Pin number as specified by UBX-MON-HW3 as PIO no. (NEO-M9N):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        5: TIMEPULSE
+        6: SAFEBOOT_N
+        7: EXTINT
+        8: Reserved (Pin 15)
+        15: Reserved (Pin 16)
+        16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (NEO-M9V):
+        0: D_SEL
+        1: RXD
+        2: TXD
+        3: SDA
+        4: SCL
+        6: TIMEPULSE
+        8: EXTINT/Wheel Tick
+        16: LNA_EN
+    */
+
+    bool uart = false;
+    bool i2c = false;
+    bool spi = false;
+    bool timepulse = false;
+    bool extint = false;
+
+    if (chip == GNSS_SAM_M10Q)
+    {
+        if ((geoCfg->pin == 0) || (geoCfg->pin == 1))
+            uart = true;
+        else if ((geoCfg->pin == 2) || (geoCfg->pin == 3))
+            i2c = true;
+        else if (geoCfg->pin == 4)
+            timepulse = true;
+        else if (geoCfg->pin == 5)
+            extint = true;
+    }
+    else if (chip == GNSS_NEO_M9N)
+    {
+        if ((geoCfg->pin == 1) || (geoCfg->pin == 2))
+        {
+            uart = true;
+            spi = true;
+        }
+        else if ((geoCfg->pin == 3) || (geoCfg->pin == 4))
+        {
+            i2c = true;
+            spi = true;
+        }
+        else if (geoCfg->pin == 5)
+            timepulse = true;
+        else if (geoCfg->pin == 7)
+            extint = true;
+    }
+    else if (chip == GNSS_NEO_M9V)
+    {
+        if ((geoCfg->pin == 1) || (geoCfg->pin == 2))
+            {
+            uart = true;
+            spi = true;
+        }
+        else if ((geoCfg->pin == 3) || (geoCfg->pin == 4))
+        {
+            i2c = true;
+            spi = true;
+        }
+        else if (geoCfg->pin == 6)
+            timepulse = true;
+        else if (geoCfg->pin == 8)
+            extint = true;
+    }
+
+    uint8_t dat;
+
+    if (geoCfg->usePio)
+    {
+        if (uart)
+        {
+            // If pin is part of UART, disable UART pins per datasheet
+
+            dat = 0x00;
+            // CFG-UART1-ENABLED
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_UART1_ENABLED, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable UART peripheral");
+                #endif
+                return 1;
+            }
+
+        }
+
+        else if (i2c)
+        {
+            // If pin is part of I2C, disable I2C pins per datasheet
+
+            dat = 0x00;
+            // CFG-I2C-ENABLED
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_I2C_ENABLED, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable I2C peripheral");
+                #endif
+                return 1;
+            }
+
+        }
+
+        else if (spi)
+        {
+            // If pin is part of SPI, disable SPI pins per datasheet
+
+            dat = 0x00;
+            // CFG-SPI-ENABLED
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SPI_ENABLED, &dat, 1))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable SPI peripheral");
+                #endif
+                return 1;
+            }
+
+        }
+        
+        else if (timepulse)
+        {
+            // If pin is part of TIMEPULSE, disable TIMEPULSE pin per datasheet
+
+            dat = 0x00;
+
+            if (chip == GNSS_NEO_M9V)
+            {
+                // CFG-TP-TP2-ENA
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                    #endif
+                    return 1;
+                }
+            }
+            else
+            {
+                // CFG-TP-TP1-ENA
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP1_ENA, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable TIMEPULSE Pin");
+                    #endif
+                    return 1;
+                }
+            }
+            
+        }
+        
+        else if (extint)
+        {
+            // If pin is part of EXTINT, disable EXTINT pin per datasheet
+
+            if (chip == GNSS_NEO_M9V)
+            {
+                dat = 0x00;
+                /*
+                // CFG-SFODO-USE_WT_PIN
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SFODO_USE_WT_PIN, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable Wheel Tick functionality");
+                    #endif
+                    return 1;
+                }
+
+                */
+            }
+            else
+            {
+                dat = 0x00;
+                // CFG-PM-EXTINTWAKE
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTWAKE, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Wake functionality");
+                    #endif
+                    return 1;
+                }
+                // CFG-PM-BACKUP
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTBACKUP, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Backup functionality");
+                    #endif
+                    return 1;
+                }
+                // CFG-PM-INACTIVE
+                if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTINACTIVE, &dat, 1))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to disable EXTINT Inactive functionality");
+                    #endif
+                    return 1;
+                }
+            }
+            
+        }
+    }
+
+    if (geoCfg->confLvl > 5)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Invalid GEOFENCE Confidence Level");
+        #endif
+        return 2;
+    }
+
+    uint8_t data[4];
+
+    data[0] = geoCfg->confLvl;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_CONFLVL, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-CONFLVL");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->usePio;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_USE_PIO, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-USE_PIO");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->pinPol;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_PINPOL, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-PINPOL");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->pin;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_PIN, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-PIN");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->latFence1 & 0xFF;
+    data[1] = (geoCfg->latFence1 >> 8) & 0xFF;
+    data[2] = (geoCfg->latFence1 >> 16) & 0xFF;
+    data[3] = (geoCfg->latFence1 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE1_LAT, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE1_LAT");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->lonFence1 & 0xFF;
+    data[1] = (geoCfg->lonFence1 >> 8) & 0xFF;
+    data[2] = (geoCfg->lonFence1 >> 16) & 0xFF;
+    data[3] = (geoCfg->lonFence1 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE1_LON, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE1_LON");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->radFence1 & 0xFF;
+    data[1] = (geoCfg->radFence1 >> 8) & 0xFF;
+    data[2] = (geoCfg->radFence1 >> 16) & 0xFF;
+    data[3] = (geoCfg->radFence1 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE1_RAD, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE1_RAD");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->useFence1;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_USE_FENCE1, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-USE_FENCE1");
+        #endif
+        return 1;
+    }
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE2_LAT, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE2_LAT");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->lonFence2 & 0xFF;
+    data[1] = (geoCfg->lonFence2 >> 8) & 0xFF;
+    data[2] = (geoCfg->lonFence2 >> 16) & 0xFF;
+    data[3] = (geoCfg->lonFence2 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE2_LON, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE2_LON");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->radFence2 & 0xFF;
+    data[1] = (geoCfg->radFence2 >> 8) & 0xFF;
+    data[2] = (geoCfg->radFence2 >> 16) & 0xFF;
+    data[3] = (geoCfg->radFence2 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE2_RAD, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE2_RAD");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->useFence2;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_USE_FENCE2, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-USE_FENCE2");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->latFence2 & 0xFF;
+    data[1] = (geoCfg->latFence2 >> 8) & 0xFF;
+    data[2] = (geoCfg->latFence2 >> 16) & 0xFF;
+    data[3] = (geoCfg->latFence2 >> 24) & 0xFF;
+
+    data[0] = geoCfg->latFence3 & 0xFF;
+    data[1] = (geoCfg->latFence3 >> 8) & 0xFF;
+    data[2] = (geoCfg->latFence3 >> 16) & 0xFF;
+    data[3] = (geoCfg->latFence3 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE3_LAT, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE3_LAT");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->lonFence3 & 0xFF;
+    data[1] = (geoCfg->lonFence3 >> 8) & 0xFF;
+    data[2] = (geoCfg->lonFence3 >> 16) & 0xFF;
+    data[3] = (geoCfg->lonFence3 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE3_LON, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE3_LON");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->radFence3 & 0xFF;
+    data[1] = (geoCfg->radFence3 >> 8) & 0xFF;
+    data[2] = (geoCfg->radFence3 >> 16) & 0xFF;
+    data[3] = (geoCfg->radFence3 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE3_RAD, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE3_RAD");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->useFence3;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_USE_FENCE3, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-USE_FENCE3");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->latFence4 & 0xFF;
+    data[1] = (geoCfg->latFence4 >> 8) & 0xFF;
+    data[2] = (geoCfg->latFence4 >> 16) & 0xFF;
+    data[3] = (geoCfg->latFence4 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE4_LAT, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE4_LAT");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->lonFence4 & 0xFF;
+    data[1] = (geoCfg->lonFence4 >> 8) & 0xFF;
+    data[2] = (geoCfg->lonFence4 >> 16) & 0xFF;
+    data[3] = (geoCfg->lonFence4 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE4_LON, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE4_LON");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->radFence4 & 0xFF;
+    data[1] = (geoCfg->radFence4 >> 8) & 0xFF;
+    data[2] = (geoCfg->radFence4 >> 16) & 0xFF;
+    data[3] = (geoCfg->radFence4 >> 24) & 0xFF;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_FENCE4_RAD, data, 0x04))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-FENCE4_RAD");
+        #endif
+        return 1;
+    }
+
+    data[0] = geoCfg->useFence4;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_GEOFENCE_USE_FENCE4, data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to write CFG-GEOFENCE-USE_FENCE4");
+        #endif
+        return 1;
+    }
+
+    return 0;
+
+}
+
 
 
 
@@ -4881,8 +5916,9 @@ uint8_t gnss_set_uart_baud(gnss_t *handle, uint32_t baud)
  * @param data Data to send to ublox gnss module (array of bytes).
  * @param bytes Length of data to send (max 255).
  * @return 0: Success
- *  1: Invalid number of bytes to write (must be > 2)
- *  2: Failed to write I2C
+ * 1: Invalid number of bytes to write (must be > 2)
+ * 2: Failed to write I2C
+ * 3: Parse buffer after SPI read/write failed
  ****************************************************************************/
 static uint8_t gnss_tx(gnss_t *handle, uint8_t *data, uint8_t bytes)
 {
@@ -4904,6 +5940,30 @@ static uint8_t gnss_tx(gnss_t *handle, uint8_t *data, uint8_t bytes)
             #endif
             return 2;
         }
+    }
+    if(handle->busType == GNSS_SPI)
+    {
+
+        handle->buffLength = bytes;
+
+        memset(handle->buffer, 0x00, bytes);
+
+        spi_write_read((spi_handle_t*)handle->bus, handle->busAddr, data, handle->buffer,(size_t)bytes);
+
+        if(gnss_parse_buffer(handle))
+            return 3;
+
+        if (handle->buffer[0] != 0xFF) // Otherwise our output will be clogged with NULL data
+        {
+            Serial.print("[DEBUG] Incoming Rx from SPI Tx: ");
+            for (uint16_t i = 0; i < bytes; i++)
+            {
+                Serial.print(handle->buffer[i]);
+                Serial.print(" ");
+            }
+            Serial.println();
+        }
+
     }
     else if(handle->busType == GNSS_UART)
     {
@@ -5039,8 +6099,7 @@ static uint8_t gnss_ubx_msg(gnss_t *handle, uint8_t cls, uint8_t id, uint16_t le
  * @brief Receive messages from gnss module.
  * For I2C: This function performs the Random Read Access - checking addresses 0xFD and 0xFE before reading the amount of data from 0xFF.
  * For Serial: This function reads the data stored in the Serial buffer, checks if the final message is complete, and continues reading until the final message is complete if necessary.
- * The data for all cases is stored in a singular buffer, then it is separated by searching for beginning and ending message portions and stored in individual message buffers.
- * The individual messages can then be interpreted using the parse_message function.
+ * The data for all cases is stored in a singular buffer, then it can separated using gnss_parse_buffer().
  * @param handle Handle for ublox gnss module.
  * @return 0: Success
  * 1: I2C Failed to read 0xFD and 0xFE message length registers.
@@ -5050,12 +6109,13 @@ static uint8_t gnss_ubx_msg(gnss_t *handle, uint8_t cls, uint8_t id, uint16_t le
  * 5: UART No bytes available in Serial buffer
  * 6: UART Buffer contains more than 500 bytes, likely overflow
  * 7: UART Failed to read buffer
- * 8: Failed to find start of new message (Received data but no start of new message and no pending message in buffer)
  ****************************************************************************/
 uint8_t gnss_rx(gnss_t *handle)
 {
 
     uint16_t length = 0;
+
+    handle->buffLength = 0;
 
     memset(handle->buffer, 0x00, GNSS_BUFFER_SIZE); // Clear buffer
 
@@ -5112,6 +6172,38 @@ uint8_t gnss_rx(gnss_t *handle)
         }
         #endif
     }
+    if(handle->busType == GNSS_SPI)
+    {
+
+        length = 256;
+
+        uint8_t tempData[length];
+        memset(tempData, 0xFF, length); // Reads are conducted by keeping SDI high (per datasheet)
+
+        // Receiver will parse incoming data until 50 consecutive 0xFF bytes, so if we attempt to read like Serial, we will lock the receiver attempting to read fake data.
+        spi_write_read((spi_handle_t*)handle->bus, handle->busAddr, tempData, handle->buffer, length);
+        
+        // If last byte read indicates it's idle, then there should be no more data to read
+        while ((handle->buffer[length - 1] != 0xFF) && (length < GNSS_BUFFER_SIZE))
+        {
+            spi_write_read((spi_handle_t*)handle->bus, handle->busAddr, tempData, handle->buffer + length, 100);
+            length += 100; // Read 100 at a time to avoid locking the receiver
+        }
+
+        #ifdef DEBUG
+        if (handle->buffer[0] != 0xFF) // Otherwise our output will be clogged with NULL data
+        {
+            Serial.print("[DEBUG] Incoming Rx: ");
+            for (uint16_t i = 0; i < length; i++)
+            {
+                Serial.print(handle->buffer[i]);
+                Serial.print(" ");
+            }
+            Serial.println();
+        }
+        #endif
+        
+    }
     else if(handle->busType == GNSS_UART)
     {
 
@@ -5145,6 +6237,23 @@ uint8_t gnss_rx(gnss_t *handle)
         #endif
     }
 
+    handle->buffLength = length; // For use with parsing
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Parse messages from buffer into individual messages.
+ * The data is separated by searching for beginning and ending message portions and stored in individual message buffers.
+ * The individual messages can then be interpreted using the parse_message function.
+ * @param handle Handle for ublox gnss module.
+ * @return 0: Success
+ * 8: Failed to find start of new message (Received data but no start of new message and no pending message in buffer)
+ ****************************************************************************/
+static uint8_t gnss_parse_buffer(gnss_t *handle)
+{
+
     // Identify messages from buffer and store as individual messages for later parsing
 
     /*
@@ -5155,10 +6264,13 @@ uint8_t gnss_rx(gnss_t *handle)
     uint16_t i = 0; // Essentially the current cursor position on the buffer
     
     #ifdef DEBUG
-    Serial.println();
+    if(handle->busType == GNSS_I2C) // Other data will clog our output
+    {
+        Serial.println();
+    }
     #endif
 
-    while (i < length)
+    while (i < handle->buffLength)
     {
 
         // Check if we've filled up the message buffer, erase and overwrite if so
@@ -5203,9 +6315,9 @@ uint8_t gnss_rx(gnss_t *handle)
         if (handle->messages[handle->write_message].length == 0) // No existing partial message, must find start of message
         {
             
-            i = gnss_find_msg_start(handle->buffer, i, length); // Search for first character of message protocols
+            i = gnss_find_msg_start(handle->buffer, i, handle->buffLength); // Search for first character of message protocols
 
-            if (i >= length) // We reached end of buffer without finding a start of message
+            if (i >= handle->buffLength) // We reached end of buffer without finding a start of message
             {
                 // Account for potential that we only have 1 byte and couldn't verify UBX message header
                 if ((i - j == 1) && (handle->buffer[j] == 0xB5))
@@ -5221,7 +6333,10 @@ uint8_t gnss_rx(gnss_t *handle)
                 }
 
                 #ifdef DEBUG
-                Serial.println("[DEBUG] Couldn't find start of message for new message");
+                if(handle->busType == GNSS_I2C) // Other data will clog our output
+                {
+                    Serial.println("[DEBUG] Couldn't find start of message for new message");
+                }
                 #endif
 
                 return 0;
@@ -5232,11 +6347,11 @@ uint8_t gnss_rx(gnss_t *handle)
             if (handle->buffer[i] == 0xB5) // UBX protocol
             {
 
-                if (length - j < 6)
+                if (handle->buffLength - j < 6)
                 {
                     // Not enough in buffer to determine length of message
-                    handle->messages[handle->write_message].length = length - j;
-                    memcpy(handle->messages[handle->write_message].buffer, handle->buffer + j, length - j);
+                    handle->messages[handle->write_message].length = handle->buffLength - j;
+                    memcpy(handle->messages[handle->write_message].buffer, handle->buffer + j, handle->buffLength - j);
 
                     #ifdef DEBUG
                     Serial.println("[DEBUG] Reached end without message ending 1");
@@ -5248,11 +6363,11 @@ uint8_t gnss_rx(gnss_t *handle)
 
                 i += ((uint16_t)handle->buffer[i] | (uint16_t)handle->buffer[i + 1] << 8) + 4 - 1; // 2 for length, 2 for checksum
 
-                if (i >= length) // Length of message exceeds data read
+                if (i >= handle->buffLength) // Length of message exceeds data read
                 {
                     // Store partial message
-                    handle->messages[handle->write_message].length = length - j;
-                    memcpy(handle->messages[handle->write_message].buffer, handle->buffer + j, length - j);
+                    handle->messages[handle->write_message].length = handle->buffLength - j;
+                    memcpy(handle->messages[handle->write_message].buffer, handle->buffer + j, handle->buffLength - j);
 
                     #ifdef DEBUG
                     Serial.println("[DEBUG] Reached end without message ending 5");
@@ -5302,9 +6417,9 @@ uint8_t gnss_rx(gnss_t *handle)
             else if (handle->buffer[i] == '$') // Message is NMEA
             {
 
-                i = gnss_find_msg_end(handle, i, length); // Find end of message
+                i = gnss_find_msg_end(handle, i, handle->buffLength); // Find end of message
 
-                if (i >= length) // Reached end of buffer before message was fully read
+                if (i >= handle->buffLength) // Reached end of buffer before message was fully read
                 {
                     i--;
                     // Store partial message
@@ -5384,11 +6499,11 @@ uint8_t gnss_rx(gnss_t *handle)
                        
                     i += len + 6 + 2 - handle->messages[handle->write_message].length - 1; // payload + length + everything before length + checksum - already gathered
 
-                    if (i >= length)
+                    if (i >= handle->buffLength)
                     {
                         // Not enough in buffer to determine length of message
-                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, length - j);
-                        handle->messages[handle->write_message].length += length - j;
+                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, handle->buffLength - j);
+                        handle->messages[handle->write_message].length += handle->buffLength - j;
 
                         #ifdef DEBUG
                         Serial.println("[DEBUG] Reached end without message ending 6");
@@ -5402,11 +6517,11 @@ uint8_t gnss_rx(gnss_t *handle)
                     // We haven't captured length of payload yet
                     i += 4 - handle->messages[handle->write_message].length;
 
-                    if (i >= length)
+                    if (i >= handle->buffLength)
                     {
                         // Not enough in buffer to determine length of message
-                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, length - j);
-                        handle->messages[handle->write_message].length += length - j;
+                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, handle->buffLength - j);
+                        handle->messages[handle->write_message].length += handle->buffLength - j;
 
                         #ifdef DEBUG
                         Serial.println("[DEBUG] Reached end without message ending 7");
@@ -5416,11 +6531,11 @@ uint8_t gnss_rx(gnss_t *handle)
 
                     i += ((uint16_t)handle->buffer[i] | (uint16_t)handle->buffer[i + 1] << 8) + 4 - 1; // 2 for length, 2 for checksum
 
-                    if (i >= length)
+                    if (i >= handle->buffLength)
                     {
                         // Length of message exceeds data read
-                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, length - j);
-                        handle->messages[handle->write_message].length += length - j;
+                        memcpy(handle->messages[handle->write_message].buffer + handle->messages[handle->write_message].length, handle->buffer + j, handle->buffLength - j);
+                        handle->messages[handle->write_message].length += handle->buffLength - j;
 
                         #ifdef DEBUG
                         Serial.println("[DEBUG] Reached end without message ending 8");
@@ -5477,13 +6592,13 @@ uint8_t gnss_rx(gnss_t *handle)
             else if (handle->messages[handle->write_message].buffer[0] == '$') // Stored partial message is NMEA
             {
 
-                i = gnss_find_msg_end(handle, i, length); // Find end of message
+                i = gnss_find_msg_end(handle, i, handle->buffLength); // Find end of message
 
                 // Re-search if previous message wasn't missing final end byte but the just found end byte was the next... byte
                 if (handle->messages[handle->write_message].buffer[handle->messages[handle->write_message].length - 1] != 0x13 && (i - j) == 0)
-                    i = gnss_find_msg_end(handle, i, length);
+                    i = gnss_find_msg_end(handle, i, handle->buffLength);
 
-                if (i >= length) // Reached end of buffer without finding end of message
+                if (i >= handle->buffLength) // Reached end of buffer without finding end of message
                 {
                     i--;
                     // Store partial message
@@ -11669,6 +12784,8 @@ uint8_t gnss_parse_messages(gnss_t *handle)
                 Serial.println("[DEBUG] UBX-TIM-VRFY");
                 #endif
 
+                int32_t timeCheck; // Normal timestamp is uint32_t
+
                 // Allocate memory for the message if not already done
                 if (handle->ubxTimVrfy == NULL)
                 {
@@ -11698,8 +12815,8 @@ uint8_t gnss_parse_messages(gnss_t *handle)
                     break;
                 }
 
-                timestamp = getUByte32_LEnd(message->buffer, offset);
-                if (timestamp == msg->itow)
+                timeCheck = getIByte32_LEnd(message->buffer, offset);
+                if (timeCheck == msg->itow)
                 {
                     msg->stale = true;
                     break;
@@ -11945,6 +13062,134 @@ uint8_t gnss_parse_messages(gnss_t *handle)
                 Serial.print("[DEBUG] distance: "); Serial.println(msg->distance);
                 Serial.print("[DEBUG] totalDistance: "); Serial.println(msg->totalDistance);
                 Serial.print("[DEBUG] distanceStd: "); Serial.println(msg->distanceStd);
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
+            case GNSS_UBX_LOG_FINDTIME: // UBX-LOG-FINDTIME
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-LOG-FINDTIME");
+                #endif
+
+                if (handle->ubxLogFindtime == NULL)
+                {
+                    gnss_ubx_log_findtime_t *ptr = (gnss_ubx_log_findtime_t *)malloc(sizeof(gnss_ubx_log_findtime_t));
+                    
+                    if (handle->ubxLogFindtime == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Failed to allocate initial memory for UBX-LOG-FINDTIME message");
+                        #endif
+                        return 1;
+                    }
+
+                    handle->ubxLogFindtime = ptr;
+
+                }
+
+                gnss_ubx_log_findtime_t *msg = handle->ubxLogFindtime;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                msg->version = message->buffer[offset + 0];
+                msg->type = message->buffer[offset + 1];
+                msg->entryNumber = getUByte32_LEnd(message->buffer, offset + 4);
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] version: "); Serial.println(msg->version);
+                Serial.print("[DEBUG] type: "); Serial.println(msg->type);
+                Serial.print("[DEBUG] entryNumber: "); Serial.println(msg->entryNumber);
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
+            case GNSS_UBX_LOG_INFO: // UBX-LOG-INFO
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-LOG-INFO");
+                #endif
+
+                if (handle->ubxLogInfo == NULL)
+                {
+                    gnss_ubx_log_info_t *ptr = (gnss_ubx_log_info_t *)malloc(sizeof(gnss_ubx_log_info_t));
+                    
+                    if (handle->ubxLogInfo == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Failed to allocate initial memory for UBX-LOG-INFO message");
+                        #endif
+                        return 1;
+                    }
+
+                    handle->ubxLogInfo = ptr;
+
+                }
+
+                gnss_ubx_log_info_t *msg = handle->ubxLogInfo;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                msg->version = message->buffer[offset + 0];
+                msg->filestoreCapacity = getUByte32_LEnd(message->buffer, offset + 4);
+                msg->currentMaxLogSize = getUByte32_LEnd(message->buffer, offset + 16);
+                msg->currentLogSize = getUByte32_LEnd(message->buffer, offset + 20);
+                msg->entryCount = getUByte32_LEnd(message->buffer, offset + 24);
+                msg->oldestYear = getUByte16_LEnd(message->buffer, offset + 28);
+                msg->oldestMonth = message->buffer[offset + 30];
+                msg->oldestDay = message->buffer[offset + 31];
+                msg->oldestHour = message->buffer[offset + 32];
+                msg->oldestMinute = message->buffer[offset + 33];
+                msg->oldestSecond = message->buffer[offset + 34];
+                msg->newestYear = getUByte16_LEnd(message->buffer, offset + 36);
+                msg->newestMonth = message->buffer[offset + 38];
+                msg->newestDay = message->buffer[offset + 39];
+                msg->newestHour = message->buffer[offset + 40];
+                msg->newestMinute = message->buffer[offset + 41];
+                msg->newestSecond = message->buffer[offset + 42];
+                msg->recording = (message->buffer[offset + 44] >> 3) & 0x01;
+                msg->inactive = (message->buffer[offset + 44] >> 4) & 0x01;
+                msg->circular = (message->buffer[offset + 44] >> 5) & 0x01;
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] version: "); Serial.println(msg->version);
+                Serial.print("[DEBUG] filestoreCapacity: "); Serial.println(msg->filestoreCapacity);
+                Serial.print("[DEBUG] currentMaxLogSize: "); Serial.println(msg->currentMaxLogSize);
+                Serial.print("[DEBUG] currentLogSize: "); Serial.println(msg->currentLogSize);
+                Serial.print("[DEBUG] entryCount: "); Serial.println(msg->entryCount);
+                Serial.print("[DEBUG] oldestYear: "); Serial.println(msg->oldestYear);
+                Serial.print("[DEBUG] oldestMonth: "); Serial.println(msg->oldestMonth);
+                Serial.print("[DEBUG] oldestDay: "); Serial.println(msg->oldestDay);
+                Serial.print("[DEBUG] oldestHour: "); Serial.println(msg->oldestHour);
+                Serial.print("[DEBUG] oldestMinute: "); Serial.println(msg->oldestMinute);
+                Serial.print("[DEBUG] oldestSecond: "); Serial.println(msg->oldestSecond);
+                Serial.print("[DEBUG] newestYear: "); Serial.println(msg->newestYear);
+                Serial.print("[DEBUG] newestMonth: "); Serial.println(msg->newestMonth);
+                Serial.print("[DEBUG] newestDay: "); Serial.println(msg->newestDay);
+                Serial.print("[DEBUG] newestHour: "); Serial.println(msg->newestHour);
+                Serial.print("[DEBUG] newestMinute: "); Serial.println(msg->newestMinute);
+                Serial.print("[DEBUG] newestSecond: "); Serial.println(msg->newestSecond);
+                Serial.print("[DEBUG] recording: "); Serial.println(msg->recording);
+                Serial.print("[DEBUG] inactive: "); Serial.println(msg->inactive);
+                Serial.print("[DEBUG] circular: "); Serial.println(msg->circular);
                 Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
                 #endif
                 break;
@@ -12641,11 +13886,12 @@ uint8_t gnss_parse_messages(gnss_t *handle)
 }
 
 /****************************************************************************
- * @brief Receive and Parse messages - gnss_rx() followed by gnss_parse_messages() for convenience.
+ * @brief Receive and Parse messages - gnss_rx() followed by gnss_parse_buffer() and then gnss_parse_messages() for convenience.
  * @param handle Handle for ublox gnss module.
  * @return 0: Success
  * 1: Failed to receive messages
- * 2: Failed to parse messages
+ * 2: Failed to parse buffer to messages
+ * 3: Failed to parse messages
  ****************************************************************************/
 uint8_t gnss_rec_and_parse(gnss_t *handle)
 {
@@ -12653,8 +13899,11 @@ uint8_t gnss_rec_and_parse(gnss_t *handle)
     if(gnss_rx(handle))
         return 1;
 
-    if(gnss_parse_messages(handle))
+    if(gnss_parse_buffer(handle))
         return 2;
+
+    if(gnss_parse_messages(handle))
+        return 3;
 
     return 0;
 
@@ -12759,6 +14008,291 @@ uint8_t gnss_retrieve_batch(gnss_t *handle, gnss_ubx_mon_batch_t *monMsg, gnss_u
 
 }
 
+/****************************************************************************
+ * @brief Send UBX-LOG-CREATE to create a log file.
+ * @note Untested!
+ * @param handle Handle for ublox gnss module.
+ * @param circular Overwrite old entries once log becomes full.
+ * @param logSize 0: Max Safe Size, 1: Minimum Size, 2: User Defined Size
+ * @param userDefinedSize Max size in bytes of log. Applicable if User Defined Log Size is selected.
+ * @return 0: Success
+ * 1: Failed to send message
+ ****************************************************************************/
+uint8_t gnss_create_log(gnss_t *handle, bool circular, uint8_t logSize, uint32_t userDefinedSize)
+{
+
+    uint8_t data[16];
+
+    data[0] = 0x00; // Message version
+    data[1] = circular;
+    data[2] = 0x00; // Reserved
+    data[3] = logSize;
+    data[4] = userDefinedSize & 0xFF; // Convert to little endian
+    data[5] = (userDefinedSize >> 8) & 0xFF;
+    data[6] = (userDefinedSize >> 16) & 0xFF;
+    data[7] = (userDefinedSize >> 24) & 0xFF;
+
+    // Send command
+    if (gnss_ubx_msg(handle, (GNSS_UBX_LOG_CREATE >> 8) & 0xFF, GNSS_UBX_LOG_CREATE & 0xFF, 16, data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send UBX-LOG-CREATE");
+        #endif
+        return 1;
+    }
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Send UBX-LOG-ERASE to deactivate the log system and erase all log data.
+ * @note Untested!
+ * @param handle Handle for ublox gnss module.
+ * @param circular Overwrite old entries once log becomes full.
+ * @param logSize 0: Max Safe Size, 1: Minimum Size, 2: User Defined Size
+ * @param userDefinedSize Max size in bytes of log. Applicable if User Defined Log Size is selected.
+ * @return 0: Success
+ * 1: Failed to send message
+ ****************************************************************************/
+uint8_t gnss_erase_log(gnss_t *handle, bool circular, uint8_t logSize, uint32_t userDefinedSize)
+{
+
+    uint8_t data = 0x00;
+
+    // Send command
+    if (gnss_ubx_msg(handle, (GNSS_UBX_LOG_ERASE >> 8) & 0xFF, GNSS_UBX_LOG_ERASE & 0xFF, 0, &data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send UBX-LOG-ERASE");
+        #endif
+        return 1;
+    }
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Send UBX-LOG-FINDTIME to search for an entry at the desired time.
+ * @note Untested!
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @param year Year of UTC Time
+ * @param month Month of UTC Time
+ * @param day Day of UTC Time
+ * @param hour Hour of UTC Time
+ * @param minute Minute of UTC Time
+ * @param second Second of UTC Time
+ * @return 0: Success
+ * 1: Failed to initialize memory for message object
+ * 2: Failed to send message
+ ****************************************************************************/
+uint8_t gnss_find_log_time(gnss_t *handle, gnss_ubx_log_findtime_t *message, uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second)
+{
+
+    if (handle->ubxLogFindtime == NULL)
+    {
+        handle->ubxLogFindtime = (gnss_ubx_log_findtime_t *)malloc(sizeof(gnss_ubx_log_findtime_t));
+        
+        if (handle->ubxLogFindtime == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-LOG-FINDTIME message");
+            #endif
+            return 1;
+        }
+
+    }
+
+    uint8_t data[16];
+
+    data[0] = 0x00; // Message version
+    data[1] = 0x00; // Request
+    data[2] = year & 0xFF; // Convert to little endian
+    data[3] = (year >> 8) & 0xFF;
+    data[4] = month;
+    data[5] = day;
+    data[6] = hour;
+    data[7] = minute;
+    data[8] = second;
+
+    gnss_ubx_log_findtime_t *msg = handle->ubxLogFindtime;
+
+    msg->version = 0x00; // Initialize value to check if it changed
+
+    // Send command
+    if (gnss_ubx_msg(handle, (GNSS_UBX_LOG_FINDTIME >> 8) & 0xFF, GNSS_UBX_LOG_FINDTIME & 0xFF, 9, data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send UBX-LOG-FINDTIME");
+        #endif
+        return 2;
+    }
+
+    timer_handle_t gen_timer;
+    timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+    timer_start(&gen_timer);
+
+    while (msg->version == 0)
+    {
+
+        if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] FINDTIME request timed out");
+            #endif
+            return 2;
+        }
+
+        gnss_rec_and_parse(handle);
+
+    }
+
+    *message = *msg;
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Send UBX-LOG-INFO to retrieve log information.
+ * @note Untested!
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @return 0: Success
+ * 1: Failed to initialize memory for message object
+ * 2: Failed to send message
+ ****************************************************************************/
+uint8_t gnss_get_log_time(gnss_t *handle, gnss_ubx_log_info_t *message)
+{
+
+    if (handle->ubxLogInfo == NULL)
+    {
+        handle->ubxLogInfo = (gnss_ubx_log_info_t *)malloc(sizeof(gnss_ubx_log_info_t));
+        
+        if (handle->ubxLogInfo == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-LOG-INFO message");
+            #endif
+            return 1;
+        }
+
+    }
+
+    uint8_t data = 0x00;
+
+    gnss_ubx_log_info_t *msg = handle->ubxLogInfo;
+
+    msg->version = 0x00; // Initialize value to check if it changed
+
+    // Send command
+    if (gnss_ubx_msg(handle, (GNSS_UBX_LOG_INFO >> 8) & 0xFF, GNSS_UBX_LOG_INFO & 0xFF, 0, &data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send UBX-LOG-INFO");
+        #endif
+        return 2;
+    }
+
+    timer_handle_t gen_timer;
+    timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+    timer_start(&gen_timer);
+
+    while (msg->version == 0)
+    {
+
+        if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] INFO request timed out");
+            #endif
+            return 2;
+        }
+
+        gnss_rec_and_parse(handle);
+
+    }
+
+    *message = *msg;
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Send UBX-LOG-RETRIEVE to retrieve log data. Log recording will be disabled (per the datasheet) during retrieval
+ * @note Untested!
+ * @param handle Handle for ublox gnss module.
+ * @param startNumber Index of first log entry to retrieve.
+ * @param entryCount Number of log entries to retrieve in cluding the first. Maximum 256.
+ * @return 0: Success
+ * 1: Failed to disable log recording prior to retrieval
+ * 2: Failed to send message
+ * 3: Failed to re-enable log recording
+ ****************************************************************************/
+/*
+uint8_t gnss_retrieve_log(gnss_t *handle, uint32_t startNumber, uint16_t entryCount)
+{
+
+    if (entryCount > 256)
+        entryCount = 256;
+
+    // Disable log recording
+    uint8_t cfgData = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_RAM, GNSS_CFG_LOGFILTER_RECORD_ENA, &cfgData, 1, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to disable log recording");
+        #endif
+        return 1;
+    }
+
+    uint8_t data[12];
+
+    data[0] = startNumber & 0xFF;
+    data[1] = (startNumber >> 8) & 0xFF;
+    data[2] = (startNumber >> 16) & 0xFF;
+    data[3] = (startNumber >> 24) & 0xFF;
+    data[4] = entryCount & 0xFF;
+    data[5] = (entryCount >> 8) & 0xFF;
+    data[6] = 0x00;
+    data[7] = 0x00;
+    data[8] = 0x00; // Message Version
+    data[9] = 0x00; // Reserved
+    data[10] = 0x00; // Reserved
+    data[11] = 0x00; // Reserved
+
+    // Send command
+    if (gnss_ubx_msg(handle, (GNSS_UBX_LOG_RETRIEVE >> 8) & 0xFF, GNSS_UBX_LOG_RETRIEVE & 0xFF, 12, data, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send UBX-LOG-RETRIEVE");
+        #endif
+        return 2;
+    }
+
+    // TODO: Add Waiting for data check here
+
+    // Re-enable log recording
+    cfgData = 0x01;
+    
+    if (gnss_cfg_set(gnss_t *handle, GNSS_RAM, GNSS_CFG_LOGFILTER_RECORD_ENA, &cfgData, 1, 1))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to re-enable log recording");
+        #endif
+        return 3;
+    }
+    
+    return 0;
+
+}
+*/
 /****************************************************************************
  * @brief Send UBX-NAV-RESETODO command
  * @param handle Handle for ublox gnss module.

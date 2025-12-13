@@ -41,8 +41,17 @@
 
 gnss_t myGNSS;
 
+// Select desired peripheral, initialization, pinout, interrupt will be configured automatically
 #define USE_I2C
+//#define USE_SPI
 //#define USE_UART
+
+// Select Ublox product used for correct cfg changes needed for some functions
+#define SAM_M10Q
+
+#ifdef SAM_M10Q
+#define CHIP GNSS_SAM_M10Q
+#endif
 
 // Create interrupt handler for easier enable/disable
 isr_handle_t* gnss_int;
@@ -67,12 +76,26 @@ timer_handle_t batch_timer;
 // I2C Address Info
 #define GNSS_ADDRESS 0x42;
 
-// Pin definitions
-#ifdef USE_I2C
+// Host Pin definitions
+#if defined(USE_I2C) || defined(USE_SPI)
 #define TX_RDY 8
 #endif
+
+#ifdef USE_SPI
+#define GNSS_SS 0
+#endif
+
 #define EXTINT 4
 #define RESET 9
+
+// Peripheral definitions
+#ifdef USE_I2C
+#define ENABLE_PERIPH 0
+#endif
+
+#ifdef USE_SPI
+#define ENABLE_PERIPH 1
+#endif
 
 // ISR to notify program to read messages
 void gnss_ISR() {
@@ -114,10 +137,26 @@ void setup()
     delay(1000);
   }
   #endif
+
+  #ifdef USE_SPI
+  // SPI Configuration
+  myGNSS.bus = &SPI_0;
+  myGNSS.busType = GNSS_SPI;
+  myGNSS.busAddr = GNSS_SS;
+
+  peripheral = 2;
+
+  while(gnss_init(&myGNSS, 3000000))
+  {
+    Serial.println("Failed to initialize GNSS SPI");
+    gnss_reset_hw(&myGNSS);
+    delay(1000);
+  }
+  #endif
   
   #ifdef USE_UART
   // UART Configuration
-  myGNSS.bus = &uart2;
+  myGNSS.bus = &uart2; // UART Bus 2
   myGNSS.busType = GNSS_UART;
 
   peripheral = 1;
@@ -130,11 +169,27 @@ void setup()
   }
   #endif
 
+  /************************************
+  * Initiate Startup Reset
+  ************************************/
+
+  // Not entirely necessary, but sometimes it clears up configuration issues when attempting to re-upload
+  gnss_reset_hw(&myGNSS);
+
+  // Clear initial INFO messages
+  timer_handle_t startup_timer;
+  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages
+
+  timer_start(&startup_timer);
+
+  while (!timer_check_exp(&startup_timer))
+    gnss_rec_and_parse(&myGNSS);
+
   /*************************************
   * Interrupt Setup
   *************************************/
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   // TXREADY functionality is not available for UART per Ublox datasheet
   gnss_int = interrupt_init(TX_RDY, GPIO_HIGH, gnss_ISR); // Interrupt polarity depends on gnss_enable_rdy() function
 
@@ -144,49 +199,125 @@ void setup()
   
   // Enable interrupt
   interrupt_set(gnss_int);
+  
+  // Set TXREADY pin
+  uint8_t enable_pio = 0; // PIO No. of chip, see function comments
+  uint8_t enable_polarity = 0; // 0: active high, 1: active low
+  uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
-  gnss_enable_rdy(&myGNSS, 0x00, 0x00, 0x02, 0x00);
+  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH, CHIP))
+  {
+    Serial.println("Failed to enable TXREADY");
+    while (1)
+      ;
+  }
+
   #endif
 
   /*************************************
-  * Eliminate Default Periodic Messaging
+  * Setup Periodic Messaging
   *************************************/
 
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_RMC, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_PVT, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSA, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSV, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GLL, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GGA, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_VTG, 0, peripheral);
+  // Disable Default Messages
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_RMC, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-RMC Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSA, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GSA Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GLL, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GLL Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GGA, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GGA Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSV, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GSV Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_VTG, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-VTG Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_PVT, 0, peripheral))
+  {
+    Serial.println("Failed to update UBX-NAV-PVT Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 0, peripheral))
+  {
+    Serial.println("Failed to update UBX-NAV-CLOCK Message Rate");
+    while (1)
+      ;
+  }
 
   /*************************************
   * Configure Batch Messaging
   *************************************/
 
   gnss_batch_cfg_t batch_cfg;
+
+  // Enable Data Batching - Requires maxEntries to be set
   batch_cfg.enable = 1;
+  // Enable PIO Notification when buffer fill level exceeds warnThresh
   batch_cfg.pioEnable = 0;
-  batch_cfg.maxEntries = 10;
+  // Maximum Entries in Buffer (num epochs) - Will be rejected if exceeds available memory
+  batch_cfg.maxEntries = 20;
+  // Buffer fill level that triggers PIO notification
   batch_cfg.warnThresh = 5;
+  // Polarity for PIO, set for active low, otherwise active high
   batch_cfg.pioActiveLow = 0;
-  batch_cfg.pioID = 0;
+  // ID of PIO for buffer fill level notification
+  batch_cfg.pioID = 5;
+  // Include additional PVT information in batch messages (see interface description)
   batch_cfg.extraPVT = 1;
+  // Include additional ODO information in batch messages (see interface description)
   batch_cfg.extraODO = 1;
 
-  gnss_update_batch(&myGNSS, &batch_cfg);
+  if(gnss_set_batch(&myGNSS, &batch_cfg, CHIP))
+  {
+    Serial.println("Failed to update batch configuration");
+    while(1)
+      ;
+  }
   
   /*************************************
-  * Change UART Baudrate
+  * Change UART Baudrate (Comment out to use Default 9600)
   *************************************/
+ 
   #ifdef USE_UART
-  timer_handle_t startup_timer;
-  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages so we don't miss anything on the speed handover
 
-  timer_start(&startup_timer);
+  timer_handle_t changeover_timer;
+  timer_init(&changeover_timer, 1000000); // Wait 1s to receive any pending messages so we don't miss anything on the speed handover
 
-  while (!timer_check_exp(&startup_timer))
+  timer_start(&changeover_timer);
+
+  while (!timer_check_exp(&changeover_timer))
     gnss_rec_and_parse(&myGNSS);
 
   Serial.println("Attempting to switch baudrate...");
@@ -209,17 +340,21 @@ void setup()
 
 void loop() {
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   if (gnss_msg == 1){
     gnss_msg = 0;
   #endif
 
   gnss_rec_and_parse(&myGNSS);
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   interrupt_enable(gnss_int);
   }
   #endif
+
+  /*************************************
+  * Output any Info Messages
+  *************************************/
 
   if(!gnss_get_msg_info(&myGNSS, &info_msg))
   {
@@ -234,7 +369,7 @@ void loop() {
   if (timer_check_exp(&batch_timer))
   {
 
-    #ifdef USE_I2C
+    #if defined(USE_I2C) || defined(USE_SPI)
     interrupt_disable(gnss_int); // Disable interrupt for Batch operation
     #endif
 
@@ -265,6 +400,8 @@ void loop() {
         Serial.println();
       }
     }
+    else
+      Serial.println("No Batch Messages to Retrieve");
 
     #ifdef USE_I2C
     interrupt_enable(gnss_int); // Enable interrupt after Batch operation

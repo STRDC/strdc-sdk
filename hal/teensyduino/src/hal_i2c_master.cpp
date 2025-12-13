@@ -103,12 +103,12 @@ uint8_t hal_i2c_read(i2c_handle_t *handle, uint8_t *data, uint16_t bytes)
         if (bytesLeft > I2C_MAX_BUFFER_SIZE) // Don't request more than max buffer size
         {
 
-            count = handle->bus->requestFrom(handle->curr_addr, I2C_MAX_BUFFER_SIZE); // Request number of bytes from slave, send stop
+            count = handle->bus->requestFrom(handle->curr_addr, (uint8_t)I2C_MAX_BUFFER_SIZE); // Request number of bytes from slave, send stop
             
         }
         else
         {
-            count = handle->bus->requestFrom(handle->curr_addr, bytesLeft); // Request number of bytes from slave, send stop
+            count = handle->bus->requestFrom(handle->curr_addr, (uint8_t)bytesLeft); // Request number of bytes from slave, send stop
             
         }
 

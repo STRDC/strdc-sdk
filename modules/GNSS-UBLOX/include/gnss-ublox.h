@@ -63,6 +63,14 @@
 #define GNSS_RST_WARM 0x0001
 #define GNSS_RST_COLD 0xFFFF
 
+// Reset Modes
+#define GNSS_RST_HW 0x00
+#define GNSS_RST_SW 0x01
+#define GNSS_RST_SW_GNSS 0x02
+#define GNSS_RST_HW_SHUTDOWN 0x04
+#define GNSS_RST_GNSS_STOP 0x08
+#define GNSS_RST_GNSS_START 0x09
+
 // Memory Locations for cfg set
 #define GNSS_RAM 1
 #define GNSS_BBR 2
@@ -110,6 +118,23 @@
 #define GNSS_ODO_PROFILE_SWIM 2
 #define GNSS_ODO_PROFILE_CAR 3
 #define GNSS_ODO_PROFILE_CUSTOM 4
+
+// Options for CFG-GEOFENCE-CONFLVL
+#define GNSS_GEOFENCE_CONFLVL_L000 0
+#define GNSS_GEOFENCE_CONFLVL_L680 1
+#define GNSS_GEOFENCE_CONFLVL_L950 2
+#define GNSS_GEOFENCE_CONFLVL_L997 3
+#define GNSS_GEOFENCE_CONFLVL_L9999 4
+#define GNSS_GEOFENCE_CONFLVL_L999999 5
+
+// Options for CFG-GEOFENCE-PINPOL
+#define GNSS_GEOFENCE_PINPOL_LOW_IN 0 // PIO low means inside geofence
+#define GNSS_GEOFENCE_PINPOL_LOW_OUT 1 // PIO low means outside geofence
+
+// Options for Chip selection on certain functions (e.g. gnss_enable_ready())
+#define GNSS_SAM_M10Q 0
+#define GNSS_NEO_M9N 1
+#define GNSS_NEO_M9V 2
 
 // UBX GNSSIDs
 #define GNSS_UBX_ID_GPS 0x00
@@ -1366,6 +1391,44 @@ typedef struct {
 } gnss_ubx_log_batch_t;
 
 typedef struct {
+
+    uint8_t version;
+    uint8_t type;
+
+    uint32_t entryNumber; // Index of first log entry of requested time or < given time. 0xFFFFFFFF if not found. Zero-based
+
+} gnss_ubx_log_findtime_t;
+
+typedef struct {
+
+    uint8_t version;
+
+    uint32_t filestoreCapacity;
+    uint32_t currentMaxLogSize;
+    uint32_t currentLogSize;
+    uint32_t entryCount;
+
+    uint16_t oldestYear;
+    uint8_t oldestMonth;
+    uint8_t oldestDay;
+    uint8_t oldestHour;
+    uint8_t oldestMinute;
+    uint8_t oldestSecond;
+
+    uint16_t newestYear;
+    uint8_t newestMonth;
+    uint8_t newestDay;
+    uint8_t newestHour;
+    uint8_t newestMinute;
+    uint8_t newestSecond;
+
+    uint8_t recording;
+    uint8_t inactive;
+    uint8_t circular;
+
+} gnss_ubx_log_info_t;
+
+typedef struct {
     
     uint8_t version;
 
@@ -1606,24 +1669,24 @@ typedef struct gnss_tx_msg_node_t {
 
 typedef struct {
 
-    bool pulseDef;
-    bool lengthDef;
-    int16_t antDelay; // ns
-    uint32_t period; // us
-    uint32_t periodLock; // us
-    uint32_t freq; // Hz
-    uint32_t freqLock; // Hz
-    uint32_t pulseLength; // us
-    uint32_t pulseLengthLock; // us
-    double duty; // %
-    double dutyLock; // %
-    int32_t userDelay; // ns
-    bool enable;
+    bool pulseDef; // Determines whether time pulse is interpreted as a frequency or period
+    bool lengthDef; // Determines whether time pulse length is interpreted in us or %
+    int16_t antDelay; // Antenna Cable Delay in (ns)
+    uint32_t period; // Time Pulse Period (us) (only if pulseDef is period)
+    uint32_t periodLock; // Time Pulse Period when locked to GNSS time (us) (only if pulseDef is period and useLocked set)
+    uint32_t freq; // Time Pulse Frequency (Hz) (only if pulseDef is freq)
+    uint32_t freqLock; // Time Pulse Frequency when locked to GNSS time (Hz) (only if pulseDef is freq and useLocked set)
+    uint32_t pulseLength; // Time Pulse Length (us) (only if lengthDef is length)
+    uint32_t pulseLengthLock; // Time Pulse length when locked to GNSS time (us) (only if lengthDef is length and useLocked set)
+    double duty; // Time Pulse Duty Cycle (%) (only if lengthDef is ratio)
+    double dutyLock; // Time Pulse Duty Cycle when locked to GNSS time (%) (only if lengthDef is ratio and useLocked set)
+    int32_t userDelay; // User-configurable Time Pulse Delay (ns)
+    bool enable; // Enable Time Pulse
     bool syncGnss; // Sync time pulse to GNSS time (1) or local clock (0)
-    bool useLocked;
-    bool alignTOW; // Align pulse to top of second
+    bool useLocked; // Use locked parameters when possible
+    bool alignTOW; // Align pulse to top of second (only if syncGnss set)
     bool polarity; // Falling edge at top of second (0) or rising edge at top of second (1)
-    uint8_t timeGrid;
+    uint8_t timeGrid; // Time Grid to use (only if syncGnss set)
 
 } gnss_pulse_cfg_t;
 
@@ -1662,8 +1725,8 @@ typedef struct {
     uint16_t warnThresh; // Buffer fill level that triggers PIO notification
     bool pioActiveLow; // Polarity for PIO, set for active low, otherwise active high
     uint8_t pioID; // ID of PIO for buffer fill level notification
-    bool extraPVT; // Include additional PVT information in batch messages (see datasheet)
-    bool extraODO; // Include additional ODO information in batch messages (see datasheet)
+    bool extraPVT; // Include additional PVT information in batch messages (see interface description)
+    bool extraODO; // Include additional ODO information in batch messages (see interface description)
 
 } gnss_batch_cfg_t;
 
@@ -1686,6 +1749,46 @@ typedef struct {
 
 } gnss_signal_cfg_t;
 
+typedef struct {
+
+    bool enable;
+    bool psmPerWake; // Record only single position per PSM on/off mode wake-up period
+    uint16_t minInterval; // Minimum time interval between regularly logged positions (s)
+    uint16_t timeThreshold; // Log if time difference is greater than this threshold (s), 0 to ignore
+    uint16_t speedThreshold; // Log if speed is greater than this threshold (m/s), 0 to ignore. Still conforms to minimum time interval
+    uint32_t posThreshold; // Log if 3D position difference is greater than this threshold (m), 0 to ignore. Still conforms to minimum time interval
+
+} gnss_log_cfg_t;
+
+typedef struct {
+
+    uint8_t confLvl; // Required confidence level (must be one of the options in the interface description: 0 - 5)
+    bool usePio; // PIO combined fence state output
+    bool pinPol; // PIO pin polarity
+    uint8_t pin; // PIO pin number
+
+    bool useFence1; // Use first geofence
+    int32_t latFence1; // Latitude of the first geofence circle center (1e-7 deg)
+    int32_t lonFence1; // Longitude of the first geofence circle center (1e-7 deg)
+    uint32_t radFence1; // Radius of the first geofence circle (0.01m)
+
+    bool useFence2; // Use second geofence
+    int32_t latFence2; // Latitude of the second geofence circle center (1e-7 deg)
+    int32_t lonFence2; // Longitude of the second geofence circle center (1e-7 deg)
+    uint32_t radFence2; // Radius of the second geofence circle (0.01m)
+
+    bool useFence3; // Use third geofence
+    int32_t latFence3; // Latitude of the third geofence circle center (1e-7 deg)
+    int32_t lonFence3; // Longitude of the third geofence circle center (1e-7 deg)
+    uint32_t radFence3; // Radius of the third geofence circle (0.01m)
+
+    bool useFence4; // Use fourth geofence
+    int32_t latFence4; // Latitude of the fourth geofence circle center (1e-7 deg)
+    int32_t lonFence4; // Longitude of the fourth geofence circle center (1e-7 deg)
+    uint32_t radFence4; // Radius of the fourth geofence circle (0.01m)
+
+} gnss_geofence_cfg_t;
+
 #define MSG_BUFFER_COUNT 32 // Max messages to store in buffer
 
 // Talker IDs for NMEA Messages
@@ -1706,6 +1809,7 @@ typedef struct {
     uint8_t pinRst; // Reset Pin
 
     uint8_t buffer[GNSS_BUFFER_SIZE]; // General Rx Buffer
+    uint16_t buffLength; // Length of data in General Rx Buffer
 
     gnss_msg_t messages[MSG_BUFFER_COUNT]; // Waiting Messages
     uint8_t pending_messages; // Complete messages needed to be parsed
@@ -1785,6 +1889,8 @@ typedef struct {
     gnss_ubx_tim_vrfy_t *ubxTimVrfy;
 
     gnss_ubx_log_batch_t **ubxLogBatch;
+    gnss_ubx_log_findtime_t *ubxLogFindtime;
+    gnss_ubx_log_info_t *ubxLogInfo;
 
     uint16_t batchQueue;
 
@@ -1831,15 +1937,17 @@ uint8_t gnss_pubx_set_msg_rate(gnss_t *, uint16_t, bool, bool, bool, bool, bool)
 
 uint8_t gnss_set_msg_auto(gnss_t *, uint16_t, uint8_t, uint8_t);
 uint8_t gnss_set_nav_rate(gnss_t *, uint16_t, uint16_t, uint8_t);
-uint8_t gnss_enable_rdy(gnss_t *, uint8_t, bool, uint8_t, uint8_t);
-uint8_t gnss_update_batch(gnss_t *, gnss_batch_cfg_t *);
-uint8_t gnss_update_pulse(gnss_t *, gnss_pulse_cfg_t *);
-uint8_t gnss_update_psm(gnss_t *, gnss_psm_cfg_t *);
-uint8_t gnss_update_signals(gnss_t *, gnss_signal_cfg_t *);
+uint8_t gnss_enable_rdy(gnss_t *, uint8_t, bool, uint8_t, uint8_t, uint8_t);
+uint8_t gnss_set_batch(gnss_t *, gnss_batch_cfg_t *, uint8_t);
+uint8_t gnss_set_pulse(gnss_t *, gnss_pulse_cfg_t *, uint8_t);
+uint8_t gnss_set_psm(gnss_t *, gnss_psm_cfg_t *, uint8_t);
+uint8_t gnss_set_signals(gnss_t *, gnss_signal_cfg_t *);
 uint8_t gnss_set_dynamic_model(gnss_t *, uint8_t);
 uint8_t gnss_set_odo_model(gnss_t *, uint8_t);
 uint8_t gnss_set_static_hold(gnss_t *, uint8_t, uint16_t);
 uint8_t gnss_set_uart_baud(gnss_t *, uint32_t);
+uint8_t gnss_set_logging(gnss_t *, gnss_log_cfg_t *);
+uint8_t gnss_set_geofencing(gnss_t *, gnss_geofence_cfg_t *, uint8_t);
 
 /****************************************************************************
  * Messaging
@@ -1864,6 +1972,12 @@ uint8_t gnss_pm_req(gnss_t *, uint32_t, bool, bool, bool, bool, bool, bool);
 uint8_t gnss_create_backup(gnss_t *);
 uint8_t gnss_clear_backup(gnss_t *);
 uint8_t gnss_get_backup_status(gnss_t *);
+
+uint8_t gnss_create_log(gnss_t *, bool, uint8_t, uint32_t);
+uint8_t gnss_erase_log(gnss_t *, bool, uint8_t, uint32_t);
+uint8_t gnss_find_log_time(gnss_t *, gnss_ubx_log_findtime_t *, uint16_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t);
+uint8_t gnss_get_log_time(gnss_t *, gnss_ubx_log_info_t *);
+uint8_t gnss_retrieve_log(gnss_t *, uint32_t, uint16_t);
 
 /****************************************************************************
  * Message Retrieval

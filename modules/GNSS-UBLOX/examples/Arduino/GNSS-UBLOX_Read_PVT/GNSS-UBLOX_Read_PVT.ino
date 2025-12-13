@@ -43,7 +43,25 @@ gnss_t myGNSS;
 
 // Select desired peripheral, initialization, pinout, interrupt will be configured automatically
 #define USE_I2C
+//#define USE_SPI
 //#define USE_UART
+
+// Select Ublox product used for correct cfg changes needed for some functions
+#define SAM_M10Q
+//#define NEO_M9N
+//#define NEO_M9V
+
+#ifdef SAM_M10Q
+#define CHIP GNSS_SAM_M10Q
+#endif
+
+#ifdef NEO_M9N
+#define CHIP GNSS_NEO_M9N
+#endif
+
+#ifdef NEO_M9V
+#define CHIP GNSS_NEO_M9V
+#endif
 
 // Create interrupt handler for easier enable/disable
 isr_handle_t* gnss_int;
@@ -61,12 +79,26 @@ uint8_t peripheral;
 // I2C Address Info
 #define GNSS_ADDRESS 0x42;
 
-// Pin definitions
-#ifdef USE_I2C
+// Host Pin definitions
+#if defined(USE_I2C) || defined(USE_SPI)
 #define TX_RDY 8
 #endif
+
+#ifdef USE_SPI
+#define GNSS_SS 0
+#endif
+
 #define EXTINT 4
 #define RESET 9
+
+// Peripheral definitions
+#ifdef USE_I2C
+#define ENABLE_PERIPH 0
+#endif
+
+#ifdef USE_SPI
+#define ENABLE_PERIPH 1
+#endif
 
 // ISR to notify program to read messages
 void gnss_ISR() {
@@ -108,10 +140,26 @@ void setup()
     delay(1000);
   }
   #endif
+
+  #ifdef USE_SPI
+  // SPI Configuration
+  myGNSS.bus = &SPI_0;
+  myGNSS.busType = GNSS_SPI;
+  myGNSS.busAddr = GNSS_SS;
+
+  peripheral = 2;
+
+  while(gnss_init(&myGNSS, 3000000))
+  {
+    Serial.println("Failed to initialize GNSS SPI");
+    gnss_reset_hw(&myGNSS);
+    delay(1000);
+  }
+  #endif
   
   #ifdef USE_UART
   // UART Configuration
-  myGNSS.bus = &uart2;
+  myGNSS.bus = &uart2; // UART Bus 2
   myGNSS.busType = GNSS_UART;
 
   peripheral = 1;
@@ -124,11 +172,27 @@ void setup()
   }
   #endif
 
+  /************************************
+  * Initiate Startup Reset
+  ************************************/
+
+  // Not entirely necessary, but sometimes it clears up configuration issues when attempting to re-upload
+  gnss_reset_hw(&myGNSS);
+
+  // Clear initial INFO messages
+  timer_handle_t startup_timer;
+  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages
+
+  timer_start(&startup_timer);
+
+  while (!timer_check_exp(&startup_timer))
+    gnss_rec_and_parse(&myGNSS);
+
   /*************************************
   * Interrupt Setup
   *************************************/
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   // TXREADY functionality is not available for UART per Ublox datasheet
   gnss_int = interrupt_init(TX_RDY, GPIO_HIGH, gnss_ISR); // Interrupt polarity depends on gnss_enable_rdy() function
 
@@ -138,13 +202,19 @@ void setup()
   
   // Enable interrupt
   interrupt_set(gnss_int);
+  
+  // Set TXREADY pin
+  uint8_t enable_pio = 0; // PIO No. of chip, see function comments
+  uint8_t enable_polarity = 0; // 0: active high, 1: active low
+  uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
-  if (gnss_enable_rdy(&myGNSS, 0, 0, 2, 0))
+  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH, CHIP))
   {
     Serial.println("Failed to enable TXREADY");
     while (1)
       ;
   }
+
   #endif
 
   /*************************************
@@ -214,16 +284,10 @@ void setup()
     while (1)
       ;
   }
+
   if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSA, 0, peripheral))
   {
     Serial.println("Failed to update NMEA-Standard-GSA Message Rate");
-    while (1)
-      ;
-  }
-
-  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSV, 10, peripheral))
-  {
-    Serial.println("Failed to update NMEA-Standard-GSV Message Rate");
     while (1)
       ;
   }
@@ -277,13 +341,13 @@ void setup()
   *************************************/
 
   #ifdef USE_UART
+  
+  timer_handle_t changeover_timer;
+  timer_init(&changeover_timer, 1000000); // Wait 1s to receive any pending messages so we don't miss anything on the speed handover
 
-  timer_handle_t startup_timer;
-  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages so we don't miss anything on the speed handover
+  timer_start(&changeover_timer);
 
-  timer_start(&startup_timer);
-
-  while (!timer_check_exp(&startup_timer))
+  while (!timer_check_exp(&changeover_timer))
     gnss_rec_and_parse(&myGNSS);
 
   Serial.println("Attempting to switch baudrate...");
@@ -307,14 +371,14 @@ void loop() {
   * Read Messages
   *************************************/
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   if (gnss_msg == 1){
     gnss_msg = 0;
   #endif
 
   gnss_rec_and_parse(&myGNSS);
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   interrupt_enable(gnss_int);
   }
   #endif

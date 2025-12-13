@@ -37,10 +37,10 @@
 #define SPI_BIT_ORDER_LSB 0
 #define SPI_BIT_ORDER_MSB 1
 
-#define SPI_MODE_0 0x00
-#define SPI_MODE_1 0x04
-#define SPI_MODE_2 0x08
-#define SPI_MODE_3 0x0C
+#define SPI_MODE_0 0x00 // CPOL: 0, CPHA: 0
+#define SPI_MODE_1 0x04 // CPOL: 0, CPHA: 1
+#define SPI_MODE_2 0x08 // CPOL: 1, CPHA: 0
+#define SPI_MODE_3 0x0C // CPOL: 1, CPHA: 1
 
 typedef struct {
 
