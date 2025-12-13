@@ -244,7 +244,7 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
     }
     else if(handle->busType == BNO08X_SPI)
     {
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE3, MSBFIRST);
+        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_3, SPI_BIT_ORDER_MSB);
 
         gpio_write(handle->wakePin, GPIO_HIGH); // Set P0 to High
     }
@@ -254,7 +254,7 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
         handle->writeAvail = 0;
 
         #ifdef UART_BUFFER_EXTRA
-        (serial_handle_t*)handle->bus.addMemoryForRead(uart_buff, 192);
+        serial_buffer_read_add((serial_handle_t*)handle->bus, uart_buff, 192);
         #endif
 
         if(serial_open((serial_handle_t*)handle->bus, speed, UART_TYPE_BASIC))

@@ -50,25 +50,39 @@
 bno08x_t bno1;
 bno08x_t bno2;
 
+// Select desired peripheral, initialization, pinout, interrupt will be configured automatically
+#define USE_I2C
+#define USE_SPI
+//#define USE_UART
+
+// Select desired data gathering behavior
+#define USE_INT
+//#define USE_POLL
+
 // Pin Definition
 #define LED 3
 
+#ifdef USE_SPI
 // Pin definitions for SPI
 #define BNO_PIN_INT 14
 #define BNO_PIN_RST 20
 #define BNO_PIN_WAKE 7
+#endif
 
+#ifdef USE_I2C
 // Pin definitions for I2C
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 15
-/*
+#endif
+
+#ifdef USE_UART
 // Pin definitions for UART
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 6
 #define UART_BUFFER_EXTRA // Unnecessary for board configurations with excess of 300 byte read buffers and other communication configurations
-*/
+#endif
 
 // BNO08x Info
 #define BNO_ADDRESS 0x4A
@@ -147,20 +161,25 @@ void get_data(bno08x_t * ic, bno_data_t * bno_data)
 
 void setup() {
   
+  #ifdef USE_SPI
   // SPI Configuration
   bno.bus = &SPI_0;
   bno.busType = BNO08X_SPI;
   bno.busAddr = BNO_SS;
+  #endif
   
+  #ifdef USE_I2C
   // I2C Configuration
   bno.bus = &i2c1;
   bno.busType = BNO08X_I2C;
   bno.busAddr = BNO_ADDRESS;
-  /*
+  #endif
+  
+  #ifdef USE_UART
   // UART Configuration
   bno.bus = &uart2;
   bno.busType = BNO08X_UART;
-  */
+  #endif
   
   // Shared Pin Configuration
   bno1.wakePin = BNO_PIN_WAKE_1;
@@ -294,8 +313,12 @@ void setup() {
   Serial.println("BNO Finished MECal Config");
 
   timer_start(&loop_timer); // Start loop timer
-  //timer_start(&poll_timer); // Start poll timer
+
+  #ifdef USE_POLL
+  timer_start(&poll_timer); // Start poll timer
+  #endif
   
+  #ifdef USE_INT
   // Generate interrupt handler
   bno_int1 = interrupt_init(BNO_PIN_INT_1, GPIO_LOW, bno_ISR1); // Interrupt is active low
     if (bno_int1 == NULL)
@@ -308,6 +331,7 @@ void setup() {
   // Enable interrupt
   interrupt_set(bno_int1);
   interrupt_set(bno_int2);
+  #endif
   
   Serial.println("Begin loop()");
 
@@ -316,7 +340,14 @@ void setup() {
 void loop() {
   
   // Read messages if received interrupt or poll timer expires
-  if (bno_msg1 == 1){ // timer_check_exp(&poll_timer) for polling
+  #ifdef USE_INT
+  if (bno_msg1 == 1){
+  #endif
+
+  #ifdef USE_POLL
+  if (timer_check_exp(&poll_timer)){
+  #endif
+
 
     bno_msg1 = 0;
 
@@ -326,13 +357,23 @@ void loop() {
     // Process report data and add to struct
     get_data(&bno1, &bno_data1);
 
-    //timer_reset(&poll_timer); for polling
+    #ifdef USE_POLL
+    timer_reset(&poll_timer);
+    #endif
 
+    #ifdef USE_INT
     // Re-enable after reading the message
     interrupt_enable(bno_int1);
+    #endif
   }
 
-  if (bno_msg2 == 1){ // timer_check_exp(&poll_timer) for polling
+  #ifdef USE_INT
+  if (bno_msg2 == 1){
+  #endif
+
+  #ifdef USE_POLL
+  if (timer_check_exp(&poll_timer)){
+  #endif
 
     bno_msg2 = 0;
 
@@ -342,15 +383,21 @@ void loop() {
     // Process report data and add to struct
     get_data(&bno2, &bno_data2);
 
-    //timer_reset(&poll_timer); for polling
+    #ifdef USE_POLL
+    timer_reset(&poll_timer);
+    #endif
 
+    #ifdef USE_INT
     // Re-enable after reading the message
     interrupt_enable(bno_int2);
+    #endif
   }
   
   if (timer_check_exp(&loop_timer) != 0){
+    #ifdef USE_INT
     interrupt_disable(bno_int1);
     interrupt_disable(bno_int2);
+    #endif
     
     timer_reset(&loop_timer);
 
@@ -404,8 +451,10 @@ void loop() {
     Serial.print("q2: "); Serial.print (bno_data2.Q2 + 0.0005f,4); Serial.print(", ");
     Serial.print("q3: "); Serial.print (bno_data2.Q3 + 0.0005f,4); Serial.println();
     
+    #ifdef USE_INT
     interrupt_enable(bno_int1);
     interrupt_enable(bno_int2);
+    #endif
  }
 
   if (bno_data1.status == 3)  gpio_toggle(LED);

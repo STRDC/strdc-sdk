@@ -1,5 +1,5 @@
 /*
- * Ublox GNSS Power Save Mode C++ Example.
+ * Ublox GNSS Geofencing C++ Example.
  *
  * @file        main.cpp
  * @author      Alex Zundel
@@ -42,13 +42,14 @@
 gnss_t myGNSS;
 
 // Select desired peripheral, initialization, pinout, interrupt will be configured automatically
-#define USE_I2C
-//#define USE_SPI
+//#define USE_I2C
+#define USE_SPI
 //#define USE_UART
 
 // Select Ublox product used for correct cfg changes needed for some functions
-#define SAM_M10Q
+//#define SAM_M10Q
 //#define NEO_M9N
+#define NEO_M9V
 
 #ifdef SAM_M10Q
 #define CHIP GNSS_SAM_M10Q
@@ -58,11 +59,12 @@ gnss_t myGNSS;
 #define CHIP GNSS_NEO_M9N
 #endif
 
+#ifdef NEO_M9V
+#define CHIP GNSS_NEO_M9V
+#endif
+
 // Create interrupt handler for easier enable/disable
 isr_handle_t* gnss_int;
-
-// PSM Configuration
-gnss_psm_cfg_t psmCfg;
 
 // Poll variable changed in INT
 volatile uint8_t gnss_msg;
@@ -77,9 +79,9 @@ uint8_t peripheral;
 // I2C Address Info
 #define GNSS_ADDRESS 0x42;
 
-// Host Pin definitions
+// Pin definitions
 #if defined(USE_I2C) || defined(USE_SPI)
-#define TX_RDY 8
+#define TX_RDY 8 // On Host
 #endif
 
 #ifdef USE_SPI
@@ -113,17 +115,15 @@ void setup()
   while (!Serial) delay(10);
 
   Serial.println("***************************************");
-  Serial.println(" Stardust Orbital Ublox GNSS PSM Example ");
+  Serial.println(" Stardust Orbital Ublox GNSS Geofencing Example ");
   Serial.println("***************************************");
 
   /*************************************
   * Initialization
   *************************************/
 
-  gpio_mode(EXTINT, GPIO_MODE_OUTPUT);
-  gpio_write(EXTINT, GPIO_HIGH);
-
   myGNSS.pinRst = RESET;
+
   
   #ifdef USE_I2C
   // I2C Configuration
@@ -204,7 +204,7 @@ void setup()
   interrupt_set(gnss_int);
   
   // Set TXREADY pin
-  uint8_t enable_pio = 0; // PIO No. of chip, see function comments
+  uint8_t enable_pio = 8; // PIO No. of chip, see function comments
   uint8_t enable_polarity = 0; // 0: active high, 1: active low
   uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
@@ -220,7 +220,7 @@ void setup()
   /*************************************
   * Setup Periodic Messaging
   *************************************/
-  
+
   // Disable Default Messages
 
   if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_RMC, 0, peripheral))
@@ -274,7 +274,7 @@ void setup()
       ;
   }
 
-  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 10, peripheral))
+  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 30, peripheral))
   {
     Serial.println("Failed to update UBX-NAV-CLOCK Message Rate");
     while (1)
@@ -282,9 +282,62 @@ void setup()
   }
 
   /*************************************
-  * Change UART Baudrate (Comment out to use Default 9600)
+  * Setup Geofencing Configuration
   *************************************/
 
+  gnss_geofence_cfg_t geoCfg;
+
+  // Required confidence level (must be one of the options in the interface description: 0 - 5)
+  geoCfg.confLvl = GNSS_GEOFENCE_CONFLVL_L950;
+  // PIO combined fence state output
+  geoCfg.usePio = true;
+  // PIO pin polarity
+  geoCfg.pinPol = GNSS_GEOFENCE_PINPOL_LOW_IN;
+  // PIO pin number
+  geoCfg.pin = 6;
+
+  // Use first geofence
+  geoCfg.useFence1 = true;
+  // Latitude of the first geofence circle center (1e-7 deg)
+  geoCfg.latFence1 = 337768040;
+  // Longitude of the first geofence circle center (1e-7 deg)
+  geoCfg.lonFence1 = -1181426290;
+  // Radius of the first geofence circle (0.01m)
+  geoCfg.radFence1 = 100000;
+
+  // Use second geofence
+  geoCfg.useFence2 = false;
+  // Latitude of the second geofence circle center (1e-7 deg)
+  geoCfg.latFence2 = 0;
+  // Longitude of the second geofence circle center (1e-7 deg)
+  geoCfg.lonFence2 = 0;
+  // Radius of the second geofence circle (0.01m)
+  geoCfg.radFence2 = 0;
+
+  // Use third geofence
+  geoCfg.useFence3 = false;
+  // Latitude of the third geofence circle center (1e-7 deg)
+  geoCfg.latFence3 = 0;
+  // Longitude of the third geofence circle center (1e-7 deg)
+  geoCfg.lonFence3 = 0;
+  // Radius of the third geofence circle (0.01m)
+  geoCfg.radFence3 = 0;
+
+  // Use fourth geofence
+  geoCfg.useFence4 = false;
+  // Latitude of the fourth geofence circle center (1e-7 deg)
+  geoCfg.latFence4 = 0;
+  // Longitude of the fourth geofence circle center (1e-7 deg)
+  geoCfg.lonFence4 = 0;
+  // Radius of the fourth geofence circle (0.01m)
+  geoCfg.radFence4 = 0;
+
+  gnss_set_geofencing(&myGNSS, &geoCfg, CHIP);
+
+  /*************************************
+  * Change UART Baudrate (Comment out to use Default 9600)
+  *************************************/
+ 
   #ifdef USE_UART
 
   timer_handle_t changeover_timer;
@@ -308,49 +361,6 @@ void setup()
 
   #endif
 
-  /*************************************
-  * Set PSM Configuration
-  *************************************/
-
-  gnss_rec_and_parse(&myGNSS);
-
-  psmCfg.mode = GNSS_PM_PSMOO;
-  // Position Update Period for PSMOO - Time between successive position fixes (s). Must be >= 5 but less than seconds in a week. If 0, receiver will never retry a fix and wait for external events
-  psmCfg.posUpdatePeriod = 600;
-  // Acquisition Period if previously failed to achieve a fix - Time before retry after failed position fix (s)
-  psmCfg.acqPeriod = 60;
-  // Position Update Period Grid Offset Relative to GPS start of week (s). Not used in PSMCT
-  psmCfg.gridOffset = 0;
-  // Time to stay in Tracking State (s) - If set to 0, receiver will only briefly enter tracking state after acquisition. How long the receiver stays in Tracking before POT (PSMCT) or Inactive for Update (PSMOO)
-  psmCfg.onTime = 15;
-  // Minimum time to spend in Acquisition State (s) - Minimum time to spend in acquisition even if signals are insufficient
-  psmCfg.minAcqTime = 20;
-  // Maximum time to spend in Acquisition State (s)
-  psmCfg.maxAcqTime = 30;
-  // Enable to prevent receiver from entering Inactive State after failing to achieve a fix
-  psmCfg.doNotEnterOff = 0;
-  // Disable to wait for normal fix OK before starting ONTIME, Enable for time fix
-  psmCfg.waitTimeFix = 0;
-  // Update ephemeris regularly (wakeup)
-  psmCfg.updateEph = 0;
-
-  // EXTINT pin select (if multiple exist on package), otherwise leave blank
-  //psmCfg.extIntSel = 1;
-  // EXTINT Pin Control (Wake) - Awake as long as EXTINT is HIGH
-  psmCfg.extIntWake = 1;
-  // EXTINT Pin Control (Backup) - Force BACKUP mode when EXTINT is LOW
-  psmCfg.extIntBackup = 0;
-  // EXTINT Pin Control (Inactive) - Force backup if EXTINT is inactive for longer than extIntInactivity
-  psmCfg.extIntInactive = 0;
-  // Inactivity timeout on ESTINT pin if enabled (ms)
-  psmCfg.extIntInactivity = 0;
-  // Limit Peak Current
-  psmCfg.limitPeakCurr = 0;
-
-  gnss_set_psm(&myGNSS, &psmCfg);
-
-  gpio_write(EXTINT, GPIO_HIGH); // Wait for first Fix, might take longer than intermittent
-
 }
 
 void loop() {
@@ -359,18 +369,18 @@ void loop() {
   if (gnss_msg == 1){
     gnss_msg = 0;
   #endif
-
+  
   gnss_rec_and_parse(&myGNSS);
 
   #if defined(USE_I2C) || defined(USE_SPI)
   interrupt_enable(gnss_int);
   }
   #endif
-  
+
   /*************************************
   * Output any Info Messages
   *************************************/
-
+ 
   if(!gnss_get_msg_info(&myGNSS, &info_msg))
   {
     Serial.print("New Info Message from Receiver: ");
@@ -382,7 +392,7 @@ void loop() {
   }
   
   /*************************************
-  * Output PVT, CLOCK, and PSM Messages (See header for structs to access full messages)
+  * Output PVT and CLOCK Messages (See header for structs to access full messages)
   *************************************/
 
   // This function polls and receives UBX-NAV-PVT if not enabled for periodic messaging, or it checks if it received a new message if it is enabled for periodic messaging
@@ -399,7 +409,7 @@ void loop() {
     }
     if(pvt_msg.validTime)
     {
-      Serial.print("UTC Time: "); Serial.print(pvt_msg.hoursUTC); Serial.print(":"); Serial.print(pvt_msg.minutesUTC); Serial.print(":"); Serial.println(pvt_msg.secondsUTC);
+      Serial.print("UTC Time: "); Serial.print(pvt_msg.hoursUTC); Serial.print(":"); Serial.print(pvt_msg.minutesUTC); Serial.print(":"); Serial.println(pvt_msg.secondsUTC);;
     }
     else
     {
@@ -413,37 +423,10 @@ void loop() {
       Serial.print("Height above Mean Sea Level (mm): "); Serial.println(pvt_msg.hMSL);
       Serial.print("Number of Satellites in View: "); Serial.println(pvt_msg.numSV);
       Serial.print("Speed over Ground (mm/s): "); Serial.println(pvt_msg.gSpeed);
-      gpio_write(EXTINT, GPIO_LOW); // After first fix, allow normal operation to resume
     }
     else
     {
       Serial.println("Waiting for fix...");
-    }
-
-    Serial.print("PSM State: ");
-    switch(pvt_msg.psmState)
-    {
-      case 0:
-        Serial.println("PSM is not active");
-        break;
-      case 1:
-        Serial.println("Enabled");
-        break;
-      case 2:
-        Serial.println("Acquisition");
-        break;
-      case 3:
-        Serial.println("Tracking");
-        break;
-      case 4:
-        Serial.println("Power Optimized Tracking");
-        break;
-      case 5:
-        Serial.println("Inactive");
-        break;
-      default:
-        Serial.println("Unknown");
-        break;
     }
 
     Serial.println();
@@ -459,6 +442,5 @@ void loop() {
     Serial.println();
 
   }
-
 
 }

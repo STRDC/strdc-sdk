@@ -49,25 +49,39 @@
 
 bno08x_t bno;
 
+// Select desired peripheral, initialization, pinout, interrupt will be configured automatically
+//#define USE_I2C
+#define USE_SPI
+//#define USE_UART
+
+// Select desired data gathering behavior
+#define USE_INT
+//#define USE_POLL
+
 // Pin Definition
 #define LED 3
 
+#ifdef USE_SPI
 // Pin definitions for SPI
 #define BNO_PIN_INT 14
 #define BNO_PIN_RST 20
 #define BNO_PIN_WAKE 7
-/*
+#endif
+
+#ifdef USE_I2C
 // Pin definitions for I2C
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 15
+#endif
 
+#ifdef USE_UART
 // Pin definitions for UART
 #define BNO_PIN_INT 17
 #define BNO_PIN_RST 16
 #define BNO_PIN_WAKE 6
 #define UART_BUFFER_EXTRA // Unnecessary for board configurations with excess of 300 byte read buffers and other communication configurations
-*/
+#endif
 
 // BNO08x Info
 #define BNO_ADDRESS 0x4A
@@ -128,20 +142,25 @@ void get_data(bno08x_t * ic, bno_data_t * bno_data)
 
 void setup() {
 
+  #ifdef USE_SPI
   // SPI Configuration
   bno.bus = &SPI_0;
   bno.busType = BNO08X_SPI;
   bno.busAddr = BNO_SS;
-  /*
+  #endif
+  
+  #ifdef USE_I2C
   // I2C Configuration
   bno.bus = &i2c1;
   bno.busType = BNO08X_I2C;
   bno.busAddr = BNO_ADDRESS;
+  #endif
   
+  #ifdef USE_UART
   // UART Configuration
   bno.bus = &uart2;
   bno.busType = BNO08X_UART;
-  */
+  #endif
   
   // Shared Pin Configuration
   bno.wakePin = BNO_PIN_WAKE;
@@ -256,6 +275,7 @@ void setup() {
 
   timer_start(&loop_timer); // Start loop timer
   
+  #ifdef USE_INT
   // Generate interrupt handler
   bno_int = interrupt_init(BNO_PIN_INT, GPIO_LOW, bno_ISR); // Interrupt is active low
     if (bno_int == NULL)
@@ -263,6 +283,7 @@ void setup() {
   
   // Enable interrupt
   interrupt_set(bno_int);
+  #endif
   
   Serial.println("Begin loop()");
 
@@ -270,8 +291,10 @@ void setup() {
 
 void loop() {
   
+  #ifdef USE_INT
   // Read messages if received interrupt
   if (bno_msg == 1){
+  #endif
 
     bno_msg = 0;
 
@@ -307,8 +330,10 @@ void loop() {
     Serial.print("y: "); Serial.print (bno_data.y); Serial.print(", ");
     Serial.print("z: "); Serial.print (bno_data.z); Serial.println();
 
+    #ifdef USE_INT
     // Re-enable after reading the message
     interrupt_enable(bno_int);
+    #endif
   }
   
   

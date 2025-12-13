@@ -41,8 +41,22 @@
 
 gnss_t myGNSS;
 
+// Select desired peripheral, initialization, pinout, interrupt will be configured automatically
 #define USE_I2C
+//#define USE_SPI
 //#define USE_UART
+
+// Select Ublox product used for correct cfg changes needed for some functions
+#define SAM_M10Q
+//#define NEO_M9N
+
+#ifdef SAM_M10Q
+#define CHIP GNSS_SAM_M10Q
+#endif
+
+#ifdef NEO_M9N
+#define CHIP GNSS_NEO_M9N
+#endif
 
 // Create interrupt handler for easier enable/disable
 isr_handle_t* gnss_int;
@@ -63,12 +77,26 @@ uint8_t peripheral;
 // I2C Address Info
 #define GNSS_ADDRESS 0x42;
 
-// Pin definitions
-#ifdef USE_I2C
+// Host Pin definitions
+#if defined(USE_I2C) || defined(USE_SPI)
 #define TX_RDY 8
 #endif
+
+#ifdef USE_SPI
+#define GNSS_SS 0
+#endif
+
 #define EXTINT 4
 #define RESET 9
+
+// Peripheral definitions
+#ifdef USE_I2C
+#define ENABLE_PERIPH 0
+#endif
+
+#ifdef USE_SPI
+#define ENABLE_PERIPH 1
+#endif
 
 // ISR to notify program to read messages
 void gnss_ISR() {
@@ -112,10 +140,26 @@ void setup()
     delay(1000);
   }
   #endif
+
+  #ifdef USE_SPI
+  // SPI Configuration
+  myGNSS.bus = &SPI_0;
+  myGNSS.busType = GNSS_SPI;
+  myGNSS.busAddr = GNSS_SS;
+
+  peripheral = 2;
+
+  while(gnss_init(&myGNSS, 3000000))
+  {
+    Serial.println("Failed to initialize GNSS SPI");
+    gnss_reset_hw(&myGNSS);
+    delay(1000);
+  }
+  #endif
   
   #ifdef USE_UART
   // UART Configuration
-  myGNSS.bus = &uart2;
+  myGNSS.bus = &uart2; // UART Bus 2
   myGNSS.busType = GNSS_UART;
 
   peripheral = 1;
@@ -128,15 +172,27 @@ void setup()
   }
   #endif
 
+  /************************************
+  * Initiate Startup Reset
+  ************************************/
+
+  // Not entirely necessary, but sometimes it clears up configuration issues when attempting to re-upload
   gnss_reset_hw(&myGNSS);
 
-  delay(1000);
+  // Clear initial INFO messages
+  timer_handle_t startup_timer;
+  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages
+
+  timer_start(&startup_timer);
+
+  while (!timer_check_exp(&startup_timer))
+    gnss_rec_and_parse(&myGNSS);
 
   /*************************************
   * Interrupt Setup
   *************************************/
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   // TXREADY functionality is not available for UART per Ublox datasheet
   gnss_int = interrupt_init(TX_RDY, GPIO_HIGH, gnss_ISR); // Interrupt polarity depends on gnss_enable_rdy() function
 
@@ -146,33 +202,101 @@ void setup()
   
   // Enable interrupt
   interrupt_set(gnss_int);
+  
+  // Set TXREADY pin
+  uint8_t enable_pio = 0; // PIO No. of chip, see function comments
+  uint8_t enable_polarity = 0; // 0: active high, 1: active low
+  uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
-  gnss_enable_rdy(&myGNSS, 0x00, 0x00, 0x02, 0x00);
+  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH, CHIP))
+  {
+    Serial.println("Failed to enable TXREADY");
+    while (1)
+      ;
+  }
+
   #endif
 
   /*************************************
   * Setup Periodic Messaging
   *************************************/
+  
+  // Disable Default Messages
 
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_RMC, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_PVT, 1, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 10, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSA, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSV, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GLL, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GGA, 0, peripheral);
-  gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_VTG, 0, peripheral);
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_RMC, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-RMC Message Rate");
+    while (1)
+      ;
+  }
+  
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSA, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GSA Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GLL, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GLL Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GGA, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GGA Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_GSV, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-GSV Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_NMEA_STANDARD_VTG, 0, peripheral))
+  {
+    Serial.println("Failed to update NMEA-Standard-VTG Message Rate");
+    while (1)
+      ;
+  }
+
+  // Enable Desired Messages
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_PVT, 1, peripheral))
+  {
+    Serial.println("Failed to update UBX-NAV-PVT Message Rate");
+    while (1)
+      ;
+  }
+
+  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 10, peripheral))
+  {
+    Serial.println("Failed to update UBX-NAV-CLOCK Message Rate");
+    while (1)
+      ;
+  }
+
+  gnss_cfg_msg_t cfgMsg;
+
+  gnss_cfg_get(&myGNSS, &cfgMsg, GNSS_CFG_RATE_MEAS, 0x00);
 
   /*************************************
-  * Change UART Baudrate
+  * Change UART Baudrate (Comment out to use Default 9600)
   *************************************/
+
   #ifdef USE_UART
-  timer_handle_t startup_timer;
-  timer_init(&startup_timer, 1000000); // Wait 1s to receive all startup messages so we don't miss anything on the speed handover
 
-  timer_start(&startup_timer);
+  timer_handle_t changeover_timer;
+  timer_init(&changeover_timer, 1000000); // Wait 1s to receive any pending messages so we don't miss anything on the speed handover
 
-  while (!timer_check_exp(&startup_timer))
+  timer_start(&changeover_timer);
+
+  while (!timer_check_exp(&changeover_timer))
     gnss_rec_and_parse(&myGNSS);
 
   Serial.println("Attempting to switch baudrate...");
@@ -196,26 +320,28 @@ void setup()
 
   psmCfg.mode = GNSS_PM_PSMOO;
   // Position Update Period for PSMOO - Time between successive position fixes (s). Must be >= 5 but less than seconds in a week. If 0, receiver will never retry a fix and wait for external events
-  psmCfg.posUpdatePeriod = 600;
+  psmCfg.posUpdatePeriod = 45;
   // Acquisition Period if previously failed to achieve a fix - Time before retry after failed position fix (s)
-  psmCfg.acqPeriod = 60;
+  psmCfg.acqPeriod = 15;
   // Position Update Period Grid Offset Relative to GPS start of week (s). Not used in PSMCT
   psmCfg.gridOffset = 0;
   // Time to stay in Tracking State (s) - If set to 0, receiver will only briefly enter tracking state after acquisition. How long the receiver stays in Tracking before POT (PSMCT) or Inactive for Update (PSMOO)
   psmCfg.onTime = 15;
   // Minimum time to spend in Acquisition State (s) - Minimum time to spend in acquisition even if signals are insufficient
-  psmCfg.minAcqTime = 20;
+  psmCfg.minAcqTime = 30;
   // Maximum time to spend in Acquisition State (s)
-  psmCfg.maxAcqTime = 30;
+  psmCfg.maxAcqTime = 120;
   // Enable to prevent receiver from entering Inactive State after failing to achieve a fix
   psmCfg.doNotEnterOff = 0;
   // Disable to wait for normal fix OK before starting ONTIME, Enable for time fix
   psmCfg.waitTimeFix = 0;
   // Update ephemeris regularly (wakeup)
   psmCfg.updateEph = 0;
-  // Pay close attention to the EXTINT pin levels, the integration manual says the pullup is disabled when EXTINT is enabled but it often isn't
+
+  // EXTINT pin select (if multiple exist on package), otherwise leave blank
+  //psmCfg.extIntSel = 1;
   // EXTINT Pin Control (Wake) - Awake as long as EXTINT is HIGH
-  psmCfg.extIntWake = 1;
+  psmCfg.extIntWake = 0;
   // EXTINT Pin Control (Backup) - Force BACKUP mode when EXTINT is LOW
   psmCfg.extIntBackup = 0;
   // EXTINT Pin Control (Inactive) - Force backup if EXTINT is inactive for longer than extIntInactivity
@@ -225,28 +351,35 @@ void setup()
   // Limit Peak Current
   psmCfg.limitPeakCurr = 0;
 
-  uint8_t data = 8;
+  if (gnss_set_psm(&myGNSS, &psmCfg, CHIP))
+  {
+    Serial.println("Failed to update PSM");
+    while(1)
+      ;
+  }
 
-  gnss_update_psm(&myGNSS, &psmCfg);
-
-  gpio_write(EXTINT, GPIO_HIGH); // Wait for first Fix, might take longer than intermittent
+  //gpio_write(EXTINT, GPIO_HIGH); // Wait for first Fix, might take longer than intermittent
 
 }
 
 void loop() {
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   if (gnss_msg == 1){
     gnss_msg = 0;
   #endif
 
   gnss_rec_and_parse(&myGNSS);
 
-  #ifdef USE_I2C
+  #if defined(USE_I2C) || defined(USE_SPI)
   interrupt_enable(gnss_int);
   }
   #endif
   
+  /*************************************
+  * Output any Info Messages
+  *************************************/
+
   if(!gnss_get_msg_info(&myGNSS, &info_msg))
   {
     Serial.print("New Info Message from Receiver: ");
@@ -257,6 +390,11 @@ void loop() {
     Serial.println();
   }
   
+  /*************************************
+  * Output PVT, CLOCK, and PSM Messages (See header for structs to access full messages)
+  *************************************/
+  
+  // This function polls and receives UBX-NAV-PVT if not enabled for periodic messaging, or it checks if it received a new message if it is enabled for periodic messaging
   if(!gnss_get_pvt(&myGNSS, &pvt_msg))
   {
 
@@ -284,7 +422,8 @@ void loop() {
       Serial.print("Height above Mean Sea Level (mm): "); Serial.println(pvt_msg.hMSL);
       Serial.print("Number of Satellites in View: "); Serial.println(pvt_msg.numSV);
       Serial.print("Speed over Ground (mm/s): "); Serial.println(pvt_msg.gSpeed);
-      gpio_write(EXTINT, GPIO_LOW); // After first fix, allow normal operation to resume
+      
+      //gpio_write(EXTINT, GPIO_LOW); // After first fix, allow normal operation to resume
     }
     else
     {
@@ -320,7 +459,7 @@ void loop() {
     Serial.println();
 
   }
-
+  
   if(!gnss_get_clock(&myGNSS, &clock_msg))
   {
 
@@ -330,6 +469,6 @@ void loop() {
     Serial.println();
 
   }
-
+  
 
 }
