@@ -115,7 +115,7 @@ void setup()
   while (!Serial) delay(10);
 
   Serial.println("***************************************");
-  Serial.println(" Stardust Orbital Ublox GNSS PVT Example ");
+  Serial.println(" Stardust Orbital Ublox GNSS Read PVT Example ");
   Serial.println("***************************************");
 
   /*************************************

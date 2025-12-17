@@ -1,7 +1,7 @@
 /*
- * Ublox GNSS Read PVT Example Sketch.
+ * Ublox GNSS Record PVT Example C++ File.
  *
- * @file        GNSS-UBLOX_Read_PVT.ino
+ * @file        main.cpp
  * @author      Alex Zundel
  * @copyright   Copyright (c) 2025 Stardust Orbital
  *
@@ -34,6 +34,7 @@
 
 #include "interrupt.h"
 #include "gnss-ublox.h"
+#include <SD.h>
 
 /*************************************
  * DEFINITIONS
@@ -100,6 +101,14 @@ uint8_t peripheral;
 #define ENABLE_PERIPH 1
 #endif
 
+// SD Card Info
+#define SD_CS_PIN BUILTIN_SDCARD  // Teensy 4.1 built-in SD card
+File dataFile;
+char csvFilename[100];
+bool sdCardAvailable = false;
+unsigned long lastLogTime = 0;
+#define LOG_INTERVAL 100  // Log every 100ms (10 Hz)
+
 // ISR to notify program to read messages
 void gnss_ISR() {
   gnss_msg = 1;
@@ -115,7 +124,7 @@ void setup()
   while (!Serial) delay(10);
 
   Serial.println("***************************************");
-  Serial.println(" Stardust Orbital Ublox GNSS Read PVT Example ");
+  Serial.println(" Stardust Orbital Ublox GNSS Record PVT Example ");
   Serial.println("***************************************");
 
   /*************************************
@@ -123,7 +132,6 @@ void setup()
   *************************************/
 
   myGNSS.pinRst = RESET;
-
   
   #ifdef USE_I2C
   // I2C Configuration
@@ -218,41 +226,9 @@ void setup()
   #endif
 
   /*************************************
-  * Disable Signals (if desired) (Comment out to use Default)
-  *************************************/
-  /*
-  // The receiver will prevent any invalid signal configurations
-  // See gnss_update_signals() definition for more information
-
-  gnss_signal_cfg_t signals;
-
-  signals.gps_ena = 1;
-  signals.gps_l1ca_ena = 1;
-  signals.sbas_ena = 1;
-  signals.sbas_l1ca_ena = 1;
-  signals.gal_ena = 1;
-  signals.gal_e1_ena = 1;
-  signals.bds_ena = 1;
-  signals.bds_b1_ena = 0;
-  signals.bds_b1c_ena = 1;
-  signals.qzss_ena = 1;
-  signals.qzss_l1ca_ena = 1;
-  signals.qzss_l1s_ena = 1;
-  signals.glo_ena = 1;
-  signals.glo_l1_ena = 1;
-
-  
-  if (gnss_update_signals(&myGNSS, &signals))
-  {
-    Serial.println("Failed to update signals");
-    while (1)
-      ;
-  }
-  */
-  /*************************************
   * Setup Navigation Rates (Comment out to use Default)
   *************************************/
-  /*
+  
   // 250ms between measurements, 1 message per measurement
   if (gnss_set_nav_rate(&myGNSS, 250, 1, 0))
   {
@@ -260,18 +236,7 @@ void setup()
     while (1)
       ;
   }
-  */
-  /*************************************
-  * Setup Static Hold (Comment out to use Default/Disable)
-  *************************************/
-  /*
-  if (gnss_set_static_hold(&myGNSS, 100, 5))
-  {
-    Serial.println("Failed to set static hold");
-    while (1)
-      ;
-  }
-  */
+  
   /*************************************
   * Setup Periodic Messaging
   *************************************/
@@ -325,13 +290,6 @@ void setup()
   if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_PVT, 1, peripheral))
   {
     Serial.println("Failed to update UBX-NAV-PVT Message Rate");
-    while (1)
-      ;
-  }
-
-  if (gnss_set_msg_auto(&myGNSS, GNSS_UBX_NAV_CLOCK, 30, peripheral))
-  {
-    Serial.println("Failed to update UBX-NAV-CLOCK Message Rate");
     while (1)
       ;
   }
@@ -408,22 +366,78 @@ void loop() {
     if (pvt_msg.validDate)
     {
       Serial.print("Date: "); Serial.print(pvt_msg.dayUTC); Serial.print("-"); Serial.print(pvt_msg.monthUTC); Serial.print("-"); Serial.println(pvt_msg.yearUTC);
+
+      if(pvt_msg.validTime)
+      {
+        Serial.print("UTC Time: "); Serial.print(pvt_msg.hoursUTC); Serial.print(":"); Serial.print(pvt_msg.minutesUTC); Serial.print(":"); Serial.println(pvt_msg.secondsUTC);
+
+        if (!sdCardAvailable)
+        {
+          /*************************************
+          * SD Card Init
+          *************************************/
+
+          if (!SD.begin(SD_CS_PIN))
+            sdCardAvailable = false;
+          else
+          {
+            sdCardAvailable = true;
+
+            // Create file with current datetime
+            snprintf(csvFilename, sizeof(csvFilename), "tracker_%d%d%d_%d%d%d.csv", pvt_msg.yearUTC, pvt_msg.monthUTC, pvt_msg.dayUTC, pvt_msg.hoursUTC, pvt_msg.minutesUTC, pvt_msg.secondsUTC);
+            dataFile = SD.open(csvFilename, FILE_WRITE);
+
+            if (dataFile) {
+              // Write header in file
+              dataFile.println("timestamp_ms,gps_datetime,latitude,longitude,altitude_mm,velocity_mps,siv");
+              dataFile.close();
+            }
+            else
+              sdCardAvailable = false;
+          }
+        }
+      }
+      else
+      {
+        Serial.println("Waiting for Valid Time...");
+      }
     }
     else
     {
       Serial.println("Waiting for Valid Date...");
     }
-    if(pvt_msg.validTime)
-    {
-      Serial.print("UTC Time: "); Serial.print(pvt_msg.hoursUTC); Serial.print(":"); Serial.print(pvt_msg.minutesUTC); Serial.print(":"); Serial.println(pvt_msg.secondsUTC);
-    }
-    else
-    {
-      Serial.println("Waiting for Valid Time...");
-    }
 
     if(pvt_msg.fixOK)
     {
+      // Record data once fix is achieved
+      unsigned long now = millis();
+
+      char buf[35];
+      snprintf(buf, sizeof(buf), "%04u-%02u-%02uT%02u:%02u:%02uZ", pvt_msg.yearUTC, pvt_msg.monthUTC, pvt_msg.dayUTC, pvt_msg.hoursUTC, pvt_msg.minutesUTC, pvt_msg.secondsUTC);
+      String gpsDateTime = buf;
+      
+      if (sdCardAvailable && (now - lastLogTime > LOG_INTERVAL)) {
+        dataFile = SD.open(csvFilename, FILE_WRITE);
+        if (dataFile) {
+          dataFile.print(now);
+          dataFile.print(",");
+          dataFile.print(gpsDateTime);
+          dataFile.print(",");
+          dataFile.print(pvt_msg.latitude);
+          dataFile.print(",");
+          dataFile.print(pvt_msg.longitude);
+          dataFile.print(",");
+          dataFile.print(pvt_msg.hMSL);
+          dataFile.print(",");
+          dataFile.print(pvt_msg.gSpeed / 1000.0, 3);
+          dataFile.print(",");
+          dataFile.print(pvt_msg.numSV);
+          dataFile.println();
+          dataFile.close();
+          lastLogTime = now;
+        }
+      }
+
       Serial.print("Latitude: "); Serial.println(pvt_msg.latitude, 7);
       Serial.print("Longitude: "); Serial.println(pvt_msg.longitude, 7);
       Serial.print("Height above Mean Sea Level (mm): "); Serial.println(pvt_msg.hMSL);
@@ -434,16 +448,6 @@ void loop() {
     {
       Serial.println("Waiting for fix...");
     }
-
-    Serial.println();
-
-  }
-
-  if(!gnss_get_clock(&myGNSS, &clock_msg))
-  {
-
-    Serial.print("Clock Bias (ns): "); Serial.println(clock_msg.bias);
-    Serial.print("Clock Drift (ns/s): "); Serial.println(clock_msg.drift);
 
     Serial.println();
 
