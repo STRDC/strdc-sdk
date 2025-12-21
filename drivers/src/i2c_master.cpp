@@ -117,7 +117,7 @@ uint8_t i2c_write(i2c_handle_t *handle, uint8_t *data, uint8_t bytes)
  * @param handle Pointer to i2c_handle_t which contains the relevant peripheral info.
  * @param reg Register to read from, must be a pointer to an array of bytes (or a singular byte).
  * @param regBytes Length of register in bytes.
- * @param data Data to send over I2C, must be a pointer to an array of bytes.
+ * @param data Data to read over I2C, must be a pointer to an array of bytes.
  * @param dataBytes Length of data in bytes, up to 256 bytes (uint8_t).
  * @return 0: Success
  *  1: Timed out
