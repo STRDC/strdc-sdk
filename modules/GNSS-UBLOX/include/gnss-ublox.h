@@ -28,8 +28,8 @@
  * SOFTWARE.
  */
 
-#ifndef SAM_M10_H
-#define SAM_M10_H
+#ifndef GNSS_UBLOX_H
+#define GNSS_UBLOX_H
 
 #include "i2c_master.h"
 #include "spi_master.h"
@@ -1805,7 +1805,6 @@ typedef struct {
     void *bus; // Pointer to communication peripheral bus
     uint8_t busType; // Bus type (e.g. GNSS_I2C, GNSS_UART)
     uint8_t busAddr; // Address for I2C, SS for SPI, Not used for UART
-    uint8_t pinInt; // Interrupt Pin
     uint8_t pinRst; // Reset Pin
 
     uint8_t buffer[GNSS_BUFFER_SIZE]; // General Rx Buffer
@@ -1903,7 +1902,7 @@ typedef struct {
     gnss_ubx_mon_span_t *ubxMonSpan;
     gnss_ubx_mon_ver_t *ubxMonVer;
 
-} gnss_t; // Handler for BNO08x
+} gnss_t; // Handler for GNSS-UBLOX
 
 
 //////////////////////

@@ -87,7 +87,7 @@ static uint8_t gnss_create_info_node(gnss_t *, gnss_msg_t *, uint16_t);
  * @param handle Handle for ublox gnss module.
  * @param speed Speed of peripheral (Hz).
  * @param mainTalker Default TalkerID for sending NMEA Tx messages to the gnss module.
- * @return 0: Read asserted interrupt successful
+ * @return 0: Initialization was successfull
  *  1: Failed to Find I2C Device
  *  2: Failed to Open Serial Port
  ****************************************************************************/
@@ -117,6 +117,9 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init I2C");
         #endif
+
+        if (speed > 400000)
+            speed = 400000; // Max speed is 400 kHz
 
         i2c_open((i2c_handle_t*)handle->bus, speed);
         
