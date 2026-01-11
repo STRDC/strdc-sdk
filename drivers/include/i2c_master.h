@@ -38,7 +38,7 @@ uint8_t i2c_find(i2c_handle_t *, uint8_t);
 void i2c_set_addr(i2c_handle_t *, uint8_t);
 uint8_t i2c_read(i2c_handle_t *, uint8_t *, uint16_t);
 uint8_t i2c_write(i2c_handle_t *, uint8_t *, uint8_t);
-uint8_t i2c_read_reg(i2c_handle_t *, uint8_t *, uint8_t, uint8_t *, uint8_t);
+uint8_t i2c_read_reg(i2c_handle_t *, uint8_t *, uint8_t, uint8_t *, uint16_t);
 void i2c_close(i2c_handle_t *);
 
 #endif

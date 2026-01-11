@@ -440,7 +440,7 @@ uint8_t lis2mdl_read(lis2mdl_t *handle, uint8_t address, uint8_t *data, uint8_t 
         #endif
 
     }
-    if(handle->busType == LIS2MDL_SPI_4_WIRE)
+    else if((handle->busType == LIS2MDL_SPI_4_WIRE) || (handle->busType == LIS2MDL_SPI_3_WIRE))
     {
 
         uint8_t addr_data[32]; // Max 2 bytes data + address
