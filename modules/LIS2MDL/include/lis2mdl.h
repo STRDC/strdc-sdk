@@ -109,7 +109,7 @@
 typedef struct {
 
     void *bus; // Pointer to communication peripheral bus
-    uint8_t busType; // Bus type (e.g. GNSS_I2C, GNSS_UART)
+    uint8_t busType; // Bus type (e.g. LIS2MDL_I2C, LIS2MDL_UART)
     uint8_t busAddr; // Address for I2C, SS for SPI, Not used for UART
 
 } lis2mdl_t; // Handler for LIS2MDL

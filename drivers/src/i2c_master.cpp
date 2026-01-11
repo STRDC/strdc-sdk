@@ -122,7 +122,7 @@ uint8_t i2c_write(i2c_handle_t *handle, uint8_t *data, uint8_t bytes)
  * @return 0: Success
  *  1: Timed out
  ****************************************************************************/
-uint8_t i2c_read_reg(i2c_handle_t *handle, uint8_t *reg, uint8_t regBytes, uint8_t *data, uint8_t dataBytes)
+uint8_t i2c_read_reg(i2c_handle_t *handle, uint8_t *reg, uint8_t regBytes, uint8_t *data, uint16_t dataBytes)
 {
 
     uint8_t success;
