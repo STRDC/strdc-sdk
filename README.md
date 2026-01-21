@@ -3,16 +3,13 @@
 # About
 strdc-sdk aims to be your go to development kit for all sensor fusion and navigation applications. Built with hardware developers and makers in mind, get from prototype to finished product faster with easy to use HALs, Drivers, and Modules for your application.
 
-# Module Status
+# Installation and Usage
+The middleware and modules require a HAL implementation to run properly. This is done to make applications platform agnostic.
 
-## BNO08x
-Turntable Interactive Self-Calibration, Tap Detection, Pickup Detection, Sleep Detection, Pocket Detection, and Heart Rate Monitor are experimental (functions are commented out) at the moment.
+## Arduino IDE
+Arduino IDE compatibile libraries can be found in each module (as well as HAL and Middleware) as a .zip. Libraries can be added from the IDE from Sketch > Include Library > Add .ZIP Library...
 
-## GNSS-Ublox
-Support for firmware used in the SAM-M10Q and NEO-M9N, though the module will also serve most basic functions with other Ublox GNSS Receiver products. Note that not all functions (configurations) are supported by every chip/firmware. Be sure to review all Ublox product documentation (including not just the datasheet, but the integration and interface manuals, as well as the firmware release note for the version used on the IC). Configurations not supported by the chip firmware will return a NACK message.
+Each library includes examples that can be run from the IDE (e.g. File > Examples).
 
-## LIS2MDL
-Support for I2C. SPI (3-wire and 4-wire) and interrupts are experimental at the moment.
-
-## BMP390
-Support for I2C. SPI (3-wire and 4-wire) and interrupts are experimental at the moment.
+## PlatformIO
+Example projects have been included in each module (as well as the drivers). The required module(s), HAL, and drivers must be manually transferred to the lib folder within the PlatformIO project to properly build.
