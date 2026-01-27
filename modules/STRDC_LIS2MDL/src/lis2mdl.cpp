@@ -58,7 +58,6 @@
  *  Configure associated GPIO,
  *  Initialize comm peripheral (I2C, SPI, UART).
  * @param handle Handle for lis2mdl module.
- * @param speed Speed of peripheral (Hz).
  * @return 0: Initialization was successful
  * 1: Failed to Find I2C Device
  * 2: Failed to change configuration to SPI 3 Wire
@@ -68,7 +67,7 @@
  * 6: Received incorrect chip identifier as part of initialization
  * 7: Failed to reboot memory for loading trimming parameters
  ****************************************************************************/
-uint8_t lis2mdl_init(lis2mdl_t *handle, uint32_t speed)
+uint8_t lis2mdl_init(lis2mdl_t *handle)
 {
 
     timer_handle_t gen_timer;
@@ -84,15 +83,9 @@ uint8_t lis2mdl_init(lis2mdl_t *handle, uint32_t speed)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init I2C");
         #endif
-
-        if (speed > 3400000)
-            speed = 3400000; // Max speed is 3.4 MHz
-
-        i2c_open((i2c_handle_t*)handle->bus, speed);
         
         if(i2c_find((i2c_handle_t*)handle->bus, handle->busAddr))
         {
-            i2c_close((i2c_handle_t*)handle->bus);
 
             #ifdef DEBUG
             Serial.println("[DEBUG] Failed to init I2C");
@@ -109,11 +102,6 @@ uint8_t lis2mdl_init(lis2mdl_t *handle, uint32_t speed)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init SPI");
         #endif
-
-        if (speed > 10000000)
-            speed = 10000000; // Max speed is 10 MHz
-
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_3, SPI_BIT_ORDER_MSB);
 
         uint8_t data = 0x04; // Change to 4-Wire Interface
 
@@ -138,11 +126,6 @@ uint8_t lis2mdl_init(lis2mdl_t *handle, uint32_t speed)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init SPI 3 Wire");
         #endif
-
-        if (speed > 10000000)
-            speed = 10000000; // Max speed is 10 MHz
-
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_3, SPI_BIT_ORDER_MSB);
     }
 
     uint8_t data;
@@ -376,6 +359,8 @@ uint8_t lis2mdl_write(lis2mdl_t *handle, uint8_t address, uint8_t *data, uint8_t
     if(handle->busType == LIS2MDL_I2C)
     {
 
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
+
         if (i2c_write((i2c_handle_t*)handle->bus, txData, bytes + 1))
         {
             #ifdef DEBUG
@@ -420,6 +405,8 @@ uint8_t lis2mdl_read(lis2mdl_t *handle, uint8_t address, uint8_t *data, uint8_t 
 
     if(handle->busType == LIS2MDL_I2C)
     {
+
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
         
         if (i2c_read_reg((i2c_handle_t*)handle->bus, &address, 0x01, data, length))
         {

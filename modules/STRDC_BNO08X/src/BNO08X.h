@@ -420,7 +420,7 @@ typedef struct {
 void bno08x_hw_reset(bno08x_t *);
 
 // Initialization
-uint8_t bno08x_init(bno08x_t *, uint32_t);
+uint8_t bno08x_init(bno08x_t *);
 //uint8_t bno08x_hub_reinit(bno08x_t *);
 uint8_t bno08x_sleep(bno08x_t *);
 uint8_t bno08x_wake(bno08x_t *);

@@ -163,22 +163,36 @@ void setup() {
   
   #ifdef USE_SPI
   // SPI Configuration
-  bno.bus = &SPI_0;
-  bno.busType = BNO08X_SPI;
-  bno.busAddr = BNO_SS;
+  bno1.bus = &SPI_0;
+  bno1.busType = BNO08X_SPI;
+  bno1.busAddr = BNO_SS;
+
+  spi_open((spi_handle_t*)bno1.bus, 1000000, SPI_MODE_3, SPI_BIT_ORDER_MSB);
+
   #endif
   
   #ifdef USE_I2C
   // I2C Configuration
-  bno.bus = &i2c1;
-  bno.busType = BNO08X_I2C;
-  bno.busAddr = BNO_ADDRESS;
+  bno2.bus = &i2c1;
+  bno2.busType = BNO08X_I2C;
+  bno2.busAddr = BNO_ADDRESS;
+
+  i2c_open((i2c_handle_t*)bno2.bus, 400000);
+
   #endif
   
   #ifdef USE_UART
   // UART Configuration
-  bno.bus = &uart2;
-  bno.busType = BNO08X_UART;
+  bno1.bus = &uart2;
+  bno1.busType = BNO08X_UART;
+
+  if(serial_open((serial_handle_t*)bno1.bus, 3000000, UART_TYPE_BASIC)) // UART must be 3Mbaud (3000000)
+  {
+    Serial.println("Failed to open Serial connection")
+    while (1)
+      ;
+  }
+
   #endif
   
   // Shared Pin Configuration
@@ -209,7 +223,7 @@ void setup() {
 
   while (init1)
   {
-    init1 = bno08x_init(&bno1, 1000000); // UART must be 3Mbaud (3000000)
+    init1 = bno08x_init(&bno1);
     switch(init1)
     {
       case 0:
@@ -252,7 +266,7 @@ void setup() {
 
   while (init2)
   {
-    init2 = bno08x_init(&bno2, 400000); // UART must be 3Mbaud (3000000)
+    init2 = bno08x_init(&bno2);
     switch(init2)
     {
       case 0:

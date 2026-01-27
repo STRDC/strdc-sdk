@@ -119,8 +119,8 @@ void setup()
   * Initialization
   *************************************/
 
+  myGNSS.rcvr = CHIP;
   myGNSS.pinRst = RESET;
-
   
   #ifdef USE_I2C
   // I2C Configuration
@@ -130,7 +130,9 @@ void setup()
 
   peripheral = 0;
 
-  while(gnss_init(&myGNSS, 400000))
+  i2c_open((i2c_handle_t*)myGNSS.bus, 400000); // Max speed is 400 kHz
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS I2C");
     gnss_reset_hw(&myGNSS);
@@ -146,7 +148,9 @@ void setup()
 
   peripheral = 2;
 
-  while(gnss_init(&myGNSS, 3000000))
+  spi_open((spi_handle_t*)myGNSS.bus, 3000000, SPI_MODE_0, SPI_BIT_ORDER_MSB); // Max speed is 5.5 MHz
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS SPI");
     gnss_reset_hw(&myGNSS);
@@ -161,7 +165,14 @@ void setup()
 
   peripheral = 1;
 
-  while(gnss_init(&myGNSS, 9600))
+  if(serial_open((serial_handle_t*)myGNSS.bus, 9600, UART_TYPE_BASIC))
+  {
+    Serial.println("Failed to open UART");
+    while (1)
+      ;
+  }
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS Serial");
     gnss_reset_hw(&myGNSS);
@@ -205,7 +216,7 @@ void setup()
   uint8_t enable_polarity = 0; // 0: active high, 1: active low
   uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
-  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH, CHIP))
+  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH))
   {
     Serial.println("Failed to enable TXREADY");
     while (1)
@@ -299,7 +310,7 @@ void setup()
   // Include additional ODO information in batch messages (see interface description)
   batch_cfg.extraODO = 1;
 
-  if(gnss_set_batch(&myGNSS, &batch_cfg, CHIP))
+  if(gnss_set_batch(&myGNSS, &batch_cfg))
   {
     Serial.println("Failed to update batch configuration");
     while(1)
@@ -307,9 +318,9 @@ void setup()
   }
   
   /*************************************
-  * Change UART Baudrate (Comment out to use Default 9600)
+  * Change UART Baudrate (Comment out to use Default Speed)
   *************************************/
- 
+  /*
   #ifdef USE_UART
 
   timer_handle_t changeover_timer;
@@ -332,7 +343,7 @@ void setup()
   Serial.println("Successfully switched baudrate!");
 
   #endif
-
+  */
   timer_init(&batch_timer, BATCH_TIME);
   timer_start(&batch_timer);
 

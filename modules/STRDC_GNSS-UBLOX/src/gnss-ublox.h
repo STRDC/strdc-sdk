@@ -135,6 +135,7 @@
 #define GNSS_SAM_M10Q 0
 #define GNSS_NEO_M9N 1
 #define GNSS_NEO_M9V 2
+#define GNSS_DAN_F10N 3
 
 // UBX GNSSIDs
 #define GNSS_UBX_ID_GPS 0x00
@@ -1113,6 +1114,24 @@ typedef struct {
 
     uint32_t iTOW; // GPS time of week (ms) use for message epoch timestamp only
 
+    uint32_t navicTow; // NAVIC Time of Week (s)
+    int32_t fNavicTow; // Fractional part of NAVIC (range of +/- 500000000). NAVIC time of week in seconds = navicTow + fNavicTow * 1e-9
+    int16_t navicWno; // NAVIC Week Number
+    int8_t leapS; // NAVIC Leap Seconds (NAVIC-UTC) (s)
+    bool navicTowValid; // Valid navicTow and fNavicTow
+    bool navicWnoValid; // Valid Week
+    bool leapSValid; // Valid leap second
+    uint32_t tAcc; // Time Accuracy Estimate
+
+} gnss_ubx_nav_timenavic_t;
+
+typedef struct {
+
+    bool stale;
+    bool periodic;
+
+    uint32_t iTOW; // GPS time of week (ms) use for message epoch timestamp only
+
     uint32_t qzssTow; // QZSS Time of Week (s)
     int32_t fQzssTow; // Fractional part of QZSS (range of +/- 500000000). QZSS time of week in seconds = qzssTow + fQzssTow * 1e-9
     int16_t qzssWno; // QZSS Week Number
@@ -1268,6 +1287,38 @@ typedef struct {
     uint8_t dwrd[40]; // Data words, combined into one long array, but words are only 4 bytes long
 
 } gnss_ubx_rxm_sfrbx_t;
+
+typedef struct {
+
+    bool stale;
+    bool periodic;
+
+    uint8_t version; // Message version
+    bool jamDetEna; // Jamming Detection Enabled
+    uint8_t jammingState;
+    bool spfDetEna; // Spoofing Detection Enabled
+    uint8_t spoofingState;
+
+} gnss_ubx_sec_sig_t;
+
+typedef struct {
+
+    uint32_t timeElapsed; // Seconds since event
+    uint8_t detectionType; // Type of Spoofing/Jamming detection
+    uint8_t eventType;
+
+} gnss_siglog_event_t;
+
+typedef struct {
+
+    bool stale;
+    bool periodic;
+
+    uint8_t version; // Message version
+    uint8_t numEvents;
+    gnss_siglog_event_t event[255];
+
+} gnss_ubx_sec_siglog_t;
 
 typedef struct {
 
@@ -1542,6 +1593,151 @@ typedef struct {
 
 typedef struct {
 
+    uint8_t version;
+
+    // Format:
+    // Val = Enabled
+    // Src = Data Source
+
+    bool sigSbasEnVal;
+    uint8_t sigSbasEnSrc;
+    bool sigSbasL1caEnVal;
+    uint8_t sigSbasL1caEnSrc;
+
+    bool sigNavicEnVal;
+    uint8_t sigNavicEnSrc;
+    bool sigNavicL5EnVal;
+    uint8_t sigNavicL5EnSrc;
+
+    bool sigGpsEnVal;
+    uint8_t sigGpsEnSrc;
+    bool sigGpsL1caEnVal;
+    uint8_t sigGpsL1caEnSrc;
+    bool sigGpsL1cEnVal;
+    uint8_t sigGpsL1cEnSrc;
+    bool sigGpsL2cEnVal;
+    uint8_t sigGpsL2cEnSrc;
+    bool sigGpsL5EnVal;
+    uint8_t sigGpsL5EnSrc;
+
+    bool sigGalEnVal;
+    uint8_t sigGalEnSrc;
+    bool sigGalE1EnVal;
+    uint8_t sigGalE1EnSrc;
+    bool sigGalE5aEnVal;
+    uint8_t sigGalE5aEnSrc;
+    bool sigGalE5bEnVal;
+    uint8_t sigGalE5bEnSrc;
+    bool sigGalE6EnVal;
+    uint8_t sigGalE6EnSrc;
+
+    bool sigQzssEnVal;
+    uint8_t sigQzssEnSrc;
+    bool sigQzssL1caEnVal;
+    uint8_t sigQzssL1caEnSrc;
+    bool sigQzssL1cEnVal;
+    uint8_t sigQzssL1cEnSrc;
+    bool sigQzssL1sEnVal;
+    uint8_t sigQzssL1sEnSrc;
+    bool sigQzssL2cEnVal;
+    uint8_t sigQzssL2cEnSrc;
+    bool sigQzssL5EnVal;
+    uint8_t sigQzssL5EnSrc;
+
+    bool sigBdsEnVal;
+    uint8_t sigBdsEnSrc;
+    bool sigBdsB1iEnVal;
+    uint8_t sigBdsB1iEnSrc;
+    bool sigBdsB1cEnVal;
+    uint8_t sigBdsB1cEnSrc;
+    bool sigBdsB2EnVal;
+    uint8_t sigBdsB2EnSrc;
+    bool sigBdsB2aEnVal;
+    uint8_t sigBdsB2aEnSrc;
+
+    bool sigGloEnVal;
+    uint8_t sigGloEnSrc;
+    bool sigGloL1EnVal;
+    uint8_t sigGloL1EnSrc;
+    bool sigGloL2EnVal;
+    uint8_t sigGloL2EnSrc;
+    bool sigGloL3EnVal;
+    uint8_t sigGloL3EnSrc;
+
+    uint8_t lnaLnaModeRegVal; // Current Internal LNA Gain
+    uint8_t lnaLnaModeCfgVal; // Configured Internal LNA Gain
+    uint8_t lnaLnaModeSrc;
+
+    bool uartEnableVal;
+    uint8_t uartEnableSrc;
+    bool uartRemapedVal;
+    uint8_t uartRemapedSrc;
+    bool uartDataBitsVal; // UART Data bits (0 = 8 bits, 1 = 7 bits)
+    uint8_t uartDataBitsSrc;
+    uint8_t uartStopBitsVal; // UART Stop bits (0 = 0.5 bits, 1 = 1 bit, 2 = 1.5 bits, 3 = 2 bits)
+    uint8_t uartStopBitsSrc;
+    uint8_t uartParityBitsVal; // UART Parity mode (0 = None, 1 = Odd, 2 = Even)
+    uint8_t uartParityBitsSrc;
+    uint8_t uartBaudrateVal; // Baud Rate
+    uint8_t uartBaudrateSrc;
+
+    bool spiEnableVal; // SPI Enabled
+    uint8_t spiEnableSrc;
+    bool spiExtendedTimeoutVal; // Disable of timeout of the interface after 1.5s
+    uint8_t spiExtendedTimeoutSrc;
+    bool spiCPolarityVal; // Clock polarity (0 = Active high SCLK idles low, 1 = Active low SCLK idles high)
+    uint8_t spiCPolaritySrc;
+    bool spiCPhaseVal; // Clock phase (0 = Data captured on first edge of SCLK, 1 = Data captured on second edge of SCLK)
+    uint8_t spiCPhaseSrc;
+    uint8_t spiMaxFfVal; // Number of bytes containing 0xFF to receive before switching off reception (0 - 63)
+    uint8_t spiMaxFfSrc;
+
+    bool i2cEnableVal; // I2C Enabled
+    uint8_t i2cEnableSrc;
+    bool i2cExtendedTimeoutVal; // Disable timeout of the interface after 1.5s
+    uint8_t i2cExtendedTimeoutSrc;
+    bool i2cRemapVal;
+    uint8_t i2cRemapSrc;
+    uint8_t i2cAddressVal; // I2C Address (7 bits)
+    uint8_t i2cAddressSrc;
+
+    uint8_t psmOperateModeVal; // 0 = PSM disabled, 1 = PSMOO, 2 = PSMCT
+    uint8_t psmOperateModeSrc;
+    uint8_t psmOperateModeState; // Power save mode state (0 = Acquisition or PSM disabled, 1 = Tracking, 2 = Power Optimized Tracking, 3 = Inactive)
+
+    uint8_t antSupSmStatusVal; // Status of Antenna Supervisor Engine (0 = INIT, 1 = DONTKNOW, 2 = OK, 3 = SHORT, 4 = OPEN)
+    uint8_t antSupAPowerVal; // Current power status of antenna (0 = OFF, 1 = ON, 2 = DONTKNOW)
+    uint8_t antSupSwitchPinVal; // Antenna switch PIO number
+    uint8_t antSupSwitchPinSrc;
+    uint8_t antSupShortPinVal; // Antenna short detection PIO number
+    uint8_t antSupShortPinSrc;
+    uint8_t antSupOpenPinVal; // Antenna open detection PIO number
+    uint8_t antSupOpenPinSrc;
+    uint8_t antSupRecIntPinVal; // Seconds after which to attempt to recover from a short state
+    uint8_t antSupRecIntPinSrc;
+    bool antSupVoltctrlPinVal; // Enable active antenna voltage control
+    uint8_t antSupVoltctrlPinSrc;
+    bool antSupShortDetVal; // Enable short antenna detection
+    uint8_t antSupShortDetSrc;
+    bool antSupShortDetPolVal; // True if polarity of antenna short detection is active low
+    uint8_t antSupShortDetPolSrc;
+    bool antSupOpenDetVal; // Enable open antenna detection
+    uint8_t antSupOpenDetSrc;
+    bool antSupOpenDetPolVal; // True if polarity of antenna open detection is active low
+    uint8_t antSupOpenDetPolSrc;
+    bool antSupPwrDownVal; // Enable power down antenna logic in event of antenna short circuit
+    uint8_t antSupPwrDownSrc;
+    bool antSupPwrDownPolVal; // True if polarity of antenna power down logic is active high
+    uint8_t antSupPwrDownPolSrc;
+    bool antSupRecoverVal; // Enable automatic recovery from short state
+    uint8_t antSupRecoverSrc;
+    uint16_t antSupShortUsVal; // Max timeout from switching on the antenna to short detection (us)
+    uint8_t antSupShortUsSrc;
+
+} gnss_ubx_mon_rcvrstat_t;
+
+typedef struct {
+
     uint8_t blockId;
     uint8_t jammingState;
     uint8_t antStatus;
@@ -1732,20 +1928,26 @@ typedef struct {
 
 typedef struct {
 
-    bool gps_ena;
-    bool gps_l1ca_ena;
-    bool sbas_ena;
-    bool sbas_l1ca_ena;
-    bool gal_ena;
-    bool gal_e1_ena;
-    bool bds_ena;
-    bool bds_b1_ena;
-    bool bds_b1c_ena;
-    bool qzss_ena;
-    bool qzss_l1ca_ena;
-    bool qzss_l1s_ena;
-    bool glo_ena;
-    bool glo_l1_ena;
+    bool gps_ena; // GPS Enable
+    bool gps_l1ca_ena; // GPS L1 C/A
+    bool gps_l5_ena; // GPS L5
+    bool sbas_ena; // SBAS Enable
+    bool sbas_l1ca_ena; // SBAS L1 C/A
+    bool gal_ena; // Galileo Enable
+    bool gal_e1_ena; // Galileo E1
+    bool gal_e5a_ena; // Galileo E5a
+    bool bds_ena; // BeiDou Enable
+    bool bds_b1_ena; // BeiDou B1I
+    bool bds_b1c_ena; // BeiDou B1C
+    bool bds_b2a_ena; // BeiDou B2a
+    bool qzss_ena; // QZSS Enable
+    bool qzss_l1ca_ena; // QZSS L1 C/A
+    bool qzss_l1s_ena; // QZSS L1S
+    bool qzss_l5_ena; // QZSS L5
+    bool glo_ena; // GLONASS Enable
+    bool glo_l1_ena; // GLONASS L1
+    bool navic_ena; // NavIC Enable
+    bool navic_l5_ena; // NavIC L5
 
 } gnss_signal_cfg_t;
 
@@ -1805,6 +2007,7 @@ typedef struct {
     void *bus; // Pointer to communication peripheral bus
     uint8_t busType; // Bus type (e.g. GNSS_I2C, GNSS_UART)
     uint8_t busAddr; // Address for I2C, SS for SPI, Not used for UART
+    uint8_t rcvr; // Receiver IC
     uint8_t pinRst; // Reset Pin
 
     uint8_t buffer[GNSS_BUFFER_SIZE]; // General Rx Buffer
@@ -1868,6 +2071,7 @@ typedef struct {
     gnss_ubx_nav_timeglo_t *ubxNavTimeglo;
     gnss_ubx_nav_timegps_t *ubxNavTimegps;
     gnss_ubx_nav_timels_t *ubxNavTimels;
+    gnss_ubx_nav_timenavic_t *ubxNavTimenavic;
     gnss_ubx_nav_timeqzss_t *ubxNavTimeqzss;
     gnss_ubx_nav_timeutc_t *ubxNavTimeutc;
     gnss_ubx_nav_velecef_t *ubxNavVelecef;
@@ -1881,6 +2085,8 @@ typedef struct {
     gnss_ubx_rxm_rlm_t *ubxRxmRlm;
     gnss_ubx_rxm_sfrbx_t *ubxRxmSfrbx;
 
+    gnss_ubx_sec_sig_t *ubxSecSig;
+    gnss_ubx_sec_siglog_t *ubxSecSiglog;
     gnss_ubx_sec_uniqid_t *ubxSecUniqid;
 
     gnss_ubx_tim_tm2_t *ubxTimTm2;
@@ -1898,6 +2104,7 @@ typedef struct {
     gnss_ubx_mon_gnss_t *ubxMonGnss;
     gnss_ubx_mon_hw3_t *ubxMonHw3;
     gnss_ubx_mon_patch_t *ubxMonPatch;
+    gnss_ubx_mon_rcvrstat_t *ubxMonRcvrstat;
     gnss_ubx_mon_rf_t *ubxMonRf;
     gnss_ubx_mon_span_t *ubxMonSpan;
     gnss_ubx_mon_ver_t *ubxMonVer;
@@ -1911,7 +2118,7 @@ typedef struct {
  * Executive Functions
  ****************************************************************************/
 
-uint8_t gnss_init(gnss_t *, uint32_t, uint8_t = GNSS_TALKER_GNSS);
+uint8_t gnss_init(gnss_t *, uint8_t = GNSS_TALKER_GNSS);
 void gnss_reset_hw(gnss_t *);
 uint8_t gnss_reset_sw(gnss_t *, uint16_t, uint8_t);
 void* allocate_msg(void **, size_t);
@@ -1936,10 +2143,10 @@ uint8_t gnss_pubx_set_msg_rate(gnss_t *, uint16_t, bool, bool, bool, bool, bool)
 
 uint8_t gnss_set_msg_auto(gnss_t *, uint16_t, uint8_t, uint8_t);
 uint8_t gnss_set_nav_rate(gnss_t *, uint16_t, uint16_t, uint8_t);
-uint8_t gnss_enable_rdy(gnss_t *, uint8_t, bool, uint8_t, uint8_t, uint8_t);
-uint8_t gnss_set_batch(gnss_t *, gnss_batch_cfg_t *, uint8_t);
-uint8_t gnss_set_pulse(gnss_t *, gnss_pulse_cfg_t *, uint8_t);
-uint8_t gnss_set_psm(gnss_t *, gnss_psm_cfg_t *, uint8_t);
+uint8_t gnss_enable_rdy(gnss_t *, uint8_t, bool, uint8_t, uint8_t);
+uint8_t gnss_set_batch(gnss_t *, gnss_batch_cfg_t *);
+uint8_t gnss_set_pulse(gnss_t *, gnss_pulse_cfg_t *);
+uint8_t gnss_set_psm(gnss_t *, gnss_psm_cfg_t *);
 uint8_t gnss_set_signals(gnss_t *, gnss_signal_cfg_t *);
 uint8_t gnss_set_dynamic_model(gnss_t *, uint8_t);
 uint8_t gnss_set_odo_model(gnss_t *, uint8_t);
@@ -1983,63 +2190,67 @@ uint8_t gnss_retrieve_log(gnss_t *, uint32_t, uint16_t);
  ****************************************************************************/
 
 uint8_t gnss_get_msg_info(gnss_t *, gnss_info_t *);
-uint8_t gnss_get_dtm(gnss_t *, gnss_nmea_std_dtm_t *);
-uint8_t gnss_get_gbs(gnss_t *, gnss_nmea_std_gbs_t *);
-uint8_t gnss_get_gga(gnss_t *, gnss_nmea_std_gga_t *);
-uint8_t gnss_get_gll(gnss_t *, gnss_nmea_std_gll_t *);
-uint8_t gnss_get_gns(gnss_t *, gnss_nmea_std_gns_t *);
-uint8_t gnss_get_grs(gnss_t *, gnss_nmea_std_grs_t *);
-uint8_t gnss_get_gsa(gnss_t *, gnss_nmea_std_gsa_t *);
-uint8_t gnss_get_gst(gnss_t *, gnss_nmea_std_gst_t *);
-uint8_t gnss_get_gsv(gnss_t *, gnss_nmea_std_gsv_t *);
-uint8_t gnss_get_rmc(gnss_t *, gnss_nmea_std_rmc_t *);
-uint8_t gnss_get_vlw(gnss_t *, gnss_nmea_std_vlw_t *);
-uint8_t gnss_get_vtg(gnss_t *, gnss_nmea_std_vtg_t *);
-uint8_t gnss_get_zda(gnss_t *, gnss_nmea_std_zda_t *);
-uint8_t gnss_get_position(gnss_t *, gnss_nmea_pubx_pos_t *);
-uint8_t gnss_get_svstatus(gnss_t *, gnss_nmea_pubx_svstatus_t *);
-uint8_t gnss_get_time(gnss_t *, gnss_nmea_pubx_time_t *);
-uint8_t gnss_get_aopstatus(gnss_t *, gnss_ubx_nav_aopstatus_t *);
-uint8_t gnss_get_clock(gnss_t *, gnss_ubx_nav_clock_t *);
-uint8_t gnss_get_cov(gnss_t *, gnss_ubx_nav_cov_t *);
-uint8_t gnss_get_dop(gnss_t *, gnss_ubx_nav_dop_t *);
-uint8_t gnss_get_eoe(gnss_t *, gnss_ubx_nav_eoe_t *);
-uint8_t gnss_get_odo(gnss_t *, gnss_ubx_nav_odo_t *);
-uint8_t gnss_get_orb(gnss_t *, gnss_ubx_nav_orb_t *);
-uint8_t gnss_get_pl(gnss_t *, gnss_ubx_nav_pl_t *);
-uint8_t gnss_get_posecef(gnss_t *, gnss_ubx_nav_posecef_t *);
-uint8_t gnss_get_posllh(gnss_t *, gnss_ubx_nav_posllh_t *);
-uint8_t gnss_get_pvt(gnss_t *, gnss_ubx_nav_pvt_t *);
-uint8_t gnss_get_sat(gnss_t *, gnss_ubx_nav_sat_t *);
-uint8_t gnss_get_sbas(gnss_t *, gnss_ubx_nav_sbas_t *);
-uint8_t gnss_get_sig(gnss_t *, gnss_ubx_nav_sig_t *);
-uint8_t gnss_get_slas(gnss_t *, gnss_ubx_nav_slas_t *);
-uint8_t gnss_get_status(gnss_t *, gnss_ubx_nav_status_t *);
-uint8_t gnss_get_timebds(gnss_t *, gnss_ubx_nav_timebds_t *);
-uint8_t gnss_get_timegal(gnss_t *, gnss_ubx_nav_timegal_t *);
-uint8_t gnss_get_timeglo(gnss_t *, gnss_ubx_nav_timeglo_t *);
-uint8_t gnss_get_timegps(gnss_t *, gnss_ubx_nav_timegps_t *);
-uint8_t gnss_get_timels(gnss_t *, gnss_ubx_nav_timels_t *);
-uint8_t gnss_get_timeqzss(gnss_t *, gnss_ubx_nav_timeqzss_t *);
-uint8_t gnss_get_timeutc(gnss_t *, gnss_ubx_nav_timeutc_t *);
-uint8_t gnss_get_velecef(gnss_t *, gnss_ubx_nav_velecef_t *);
-uint8_t gnss_get_velned(gnss_t *, gnss_ubx_nav_velned_t *);
-uint8_t gnss_get_meas20(gnss_t *, gnss_ubx_rxm_meas20_t *);
-uint8_t gnss_get_meas50(gnss_t *, gnss_ubx_rxm_meas50_t *);
-uint8_t gnss_get_measc12(gnss_t *, gnss_ubx_rxm_measc12_t *);
-uint8_t gnss_get_measd12(gnss_t *, gnss_ubx_rxm_measd12_t *);
-uint8_t gnss_get_measx(gnss_t *, gnss_ubx_rxm_measx_t *);
-uint8_t gnss_get_rlm(gnss_t *, gnss_ubx_rxm_rlm_t *);
-uint8_t gnss_get_sfrbx(gnss_t *, gnss_ubx_rxm_sfrbx_t *);
-uint8_t gnss_get_tm2(gnss_t *, gnss_ubx_tim_tm2_t *);
-uint8_t gnss_get_tp(gnss_t *, gnss_ubx_tim_tp_t *);
-uint8_t gnss_get_vrfy(gnss_t *, gnss_ubx_tim_vrfy_t *);
-uint8_t gnss_get_comms(gnss_t *, gnss_ubx_mon_comms_t *);
-uint8_t gnss_get_gnss(gnss_t *, gnss_ubx_mon_gnss_t *);
-uint8_t gnss_get_hw3(gnss_t *, gnss_ubx_mon_hw3_t *);
-uint8_t gnss_get_patch(gnss_t *, gnss_ubx_mon_patch_t *);
-uint8_t gnss_get_rf(gnss_t *, gnss_ubx_mon_rf_t *);
-uint8_t gnss_get_span(gnss_t *, gnss_ubx_mon_span_t *);
-uint8_t gnss_get_version(gnss_t *, gnss_ubx_mon_ver_t *);
+uint8_t gnss_get_nmea_dtm(gnss_t *, gnss_nmea_std_dtm_t *);
+uint8_t gnss_get_nmea_gbs(gnss_t *, gnss_nmea_std_gbs_t *);
+uint8_t gnss_get_nmea_gga(gnss_t *, gnss_nmea_std_gga_t *);
+uint8_t gnss_get_nmea_gll(gnss_t *, gnss_nmea_std_gll_t *);
+uint8_t gnss_get_nmea_gns(gnss_t *, gnss_nmea_std_gns_t *);
+uint8_t gnss_get_nmea_grs(gnss_t *, gnss_nmea_std_grs_t *);
+uint8_t gnss_get_nmea_gsa(gnss_t *, gnss_nmea_std_gsa_t *);
+uint8_t gnss_get_nmea_gst(gnss_t *, gnss_nmea_std_gst_t *);
+uint8_t gnss_get_nmea_gsv(gnss_t *, gnss_nmea_std_gsv_t *);
+uint8_t gnss_get_nmea_rmc(gnss_t *, gnss_nmea_std_rmc_t *);
+uint8_t gnss_get_nmea_vlw(gnss_t *, gnss_nmea_std_vlw_t *);
+uint8_t gnss_get_nmea_vtg(gnss_t *, gnss_nmea_std_vtg_t *);
+uint8_t gnss_get_nmea_zda(gnss_t *, gnss_nmea_std_zda_t *);
+uint8_t gnss_get_pubx_position(gnss_t *, gnss_nmea_pubx_pos_t *);
+uint8_t gnss_get_pubx_svstatus(gnss_t *, gnss_nmea_pubx_svstatus_t *);
+uint8_t gnss_get_pubx_time(gnss_t *, gnss_nmea_pubx_time_t *);
+uint8_t gnss_get_nav_aopstatus(gnss_t *, gnss_ubx_nav_aopstatus_t *);
+uint8_t gnss_get_nav_clock(gnss_t *, gnss_ubx_nav_clock_t *);
+uint8_t gnss_get_nav_cov(gnss_t *, gnss_ubx_nav_cov_t *);
+uint8_t gnss_get_nav_dop(gnss_t *, gnss_ubx_nav_dop_t *);
+uint8_t gnss_get_nav_eoe(gnss_t *, gnss_ubx_nav_eoe_t *);
+uint8_t gnss_get_nav_odo(gnss_t *, gnss_ubx_nav_odo_t *);
+uint8_t gnss_get_nav_orb(gnss_t *, gnss_ubx_nav_orb_t *);
+uint8_t gnss_get_nav_pl(gnss_t *, gnss_ubx_nav_pl_t *);
+uint8_t gnss_get_nav_posecef(gnss_t *, gnss_ubx_nav_posecef_t *);
+uint8_t gnss_get_nav_posllh(gnss_t *, gnss_ubx_nav_posllh_t *);
+uint8_t gnss_get_nav_pvt(gnss_t *, gnss_ubx_nav_pvt_t *);
+uint8_t gnss_get_nav_sat(gnss_t *, gnss_ubx_nav_sat_t *);
+uint8_t gnss_get_nav_sbas(gnss_t *, gnss_ubx_nav_sbas_t *);
+uint8_t gnss_get_nav_sig(gnss_t *, gnss_ubx_nav_sig_t *);
+uint8_t gnss_get_nav_slas(gnss_t *, gnss_ubx_nav_slas_t *);
+uint8_t gnss_get_nav_status(gnss_t *, gnss_ubx_nav_status_t *);
+uint8_t gnss_get_nav_timebds(gnss_t *, gnss_ubx_nav_timebds_t *);
+uint8_t gnss_get_nav_timegal(gnss_t *, gnss_ubx_nav_timegal_t *);
+uint8_t gnss_get_nav_timeglo(gnss_t *, gnss_ubx_nav_timeglo_t *);
+uint8_t gnss_get_nav_timegps(gnss_t *, gnss_ubx_nav_timegps_t *);
+uint8_t gnss_get_nav_timels(gnss_t *, gnss_ubx_nav_timels_t *);
+uint8_t gnss_get_nav_timenavic(gnss_t *, gnss_ubx_nav_timenavic_t *);
+uint8_t gnss_get_nav_timeqzss(gnss_t *, gnss_ubx_nav_timeqzss_t *);
+uint8_t gnss_get_nav_timeutc(gnss_t *, gnss_ubx_nav_timeutc_t *);
+uint8_t gnss_get_nav_velecef(gnss_t *, gnss_ubx_nav_velecef_t *);
+uint8_t gnss_get_nav_velned(gnss_t *, gnss_ubx_nav_velned_t *);
+uint8_t gnss_get_rxm_meas20(gnss_t *, gnss_ubx_rxm_meas20_t *);
+uint8_t gnss_get_rxm_meas50(gnss_t *, gnss_ubx_rxm_meas50_t *);
+uint8_t gnss_get_rxm_measc12(gnss_t *, gnss_ubx_rxm_measc12_t *);
+uint8_t gnss_get_rxm_measd12(gnss_t *, gnss_ubx_rxm_measd12_t *);
+uint8_t gnss_get_rxm_measx(gnss_t *, gnss_ubx_rxm_measx_t *);
+uint8_t gnss_get_rxm_rlm(gnss_t *, gnss_ubx_rxm_rlm_t *);
+uint8_t gnss_get_rxm_sfrbx(gnss_t *, gnss_ubx_rxm_sfrbx_t *);
+uint8_t gnss_get_tim_tm2(gnss_t *, gnss_ubx_tim_tm2_t *);
+uint8_t gnss_get_tim_tp(gnss_t *, gnss_ubx_tim_tp_t *);
+uint8_t gnss_get_tim_vrfy(gnss_t *, gnss_ubx_tim_vrfy_t *);
+uint8_t gnss_get_mon_comms(gnss_t *, gnss_ubx_mon_comms_t *);
+uint8_t gnss_get_mon_gnss(gnss_t *, gnss_ubx_mon_gnss_t *);
+uint8_t gnss_get_mon_hw3(gnss_t *, gnss_ubx_mon_hw3_t *);
+uint8_t gnss_get_mon_patch(gnss_t *, gnss_ubx_mon_patch_t *);
+uint8_t gnss_get_mon_rcvrstat(gnss_t *, gnss_ubx_mon_rcvrstat_t *);
+uint8_t gnss_get_mon_rf(gnss_t *, gnss_ubx_mon_rf_t *);
+uint8_t gnss_get_mon_span(gnss_t *, gnss_ubx_mon_span_t *);
+uint8_t gnss_get_mon_version(gnss_t *, gnss_ubx_mon_ver_t *);
+uint8_t gnss_get_sec_sig(gnss_t *, gnss_ubx_sec_sig_t *);
+uint8_t gnss_get_sec_siglog(gnss_t *, gnss_ubx_sec_siglog_t *);
 
 #endif

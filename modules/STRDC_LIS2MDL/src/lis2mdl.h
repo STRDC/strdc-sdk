@@ -116,7 +116,7 @@ typedef struct {
 
 // Functions
 
-uint8_t lis2mdl_init(lis2mdl_t *, uint32_t);
+uint8_t lis2mdl_init(lis2mdl_t *);
 uint8_t lis2mdl_sw_reset(lis2mdl_t *);
 uint8_t lis2mdl_reboot_memory(lis2mdl_t *);
 uint8_t lis2mdl_set_rate(lis2mdl_t *, uint8_t);

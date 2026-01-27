@@ -96,7 +96,9 @@ void setup() {
   myBmp.busType = BMP390_I2C;
   myBmp.busAddr = BMP390_ADDRESS;
 
-  while(bmp390_init(&myBmp, 400000))
+  i2c_open((i2c_handle_t*)myBmp.bus, 400000); // Max Speed 3.4 MHz
+
+  while(bmp390_init(&myBmp))
   {
     Serial.println("Failed to initialize BMP390 I2C");
     delay(1000);
@@ -109,7 +111,10 @@ void setup() {
   myBmp.busType = BMP390_SPI_4_WIRE;
   myBmp.busAddr = BMP390_SS;
 
-  while(bmp390_init(&myBmp, 5000000))
+  // Max speed is 10 MHz
+  spi_open((spi_handle_t*)myBmp.bus, 5000000, SPI_MODE_3, SPI_BIT_ORDER_MSB); // Can operate on both Mode 0 and Mode 3, it switches automatically on CSB assert
+
+  while(bmp390_init(&myBmp))
   {
     Serial.println("Failed to initialize BMP390 SPI");
     delay(1000);
@@ -122,7 +127,10 @@ void setup() {
   myBmp.busType = BMP390_SPI_3_WIRE;
   myBmp.busAddr = BMP390_SS;
 
-  while(bmp390_init(&myLis, 5000000))
+  // Max speed is 10 MHz
+  spi_open((spi_handle_t*)myBmp.bus, 5000000, SPI_MODE_3, SPI_BIT_ORDER_MSB); // Can operate on both Mode 0 and Mode 3, it switches automatically on CSB assert
+
+  while(bmp390_init(&myBmp))
   {
     Serial.println("Failed to initialize BMP390 SPI 3-Wire");
     delay(1000);
