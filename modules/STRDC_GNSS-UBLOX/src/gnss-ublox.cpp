@@ -85,13 +85,11 @@ static uint8_t gnss_create_info_node(gnss_t *, gnss_msg_t *, uint16_t);
  *  Configure associated GPIO,
  *  Initialize comm peripheral (I2C, SPI, UART).
  * @param handle Handle for ublox gnss module.
- * @param speed Speed of peripheral (Hz).
  * @param mainTalker Default TalkerID for sending NMEA Tx messages to the gnss module.
  * @return 0: Initialization was successfull
  *  1: Failed to Find I2C Device
- *  2: Failed to Open Serial Port
  ****************************************************************************/
-uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
+uint8_t gnss_init(gnss_t *handle, uint8_t mainTalker)
 {
 
     // Initialize Attributes and Buffer
@@ -117,15 +115,9 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init I2C");
         #endif
-
-        if (speed > 400000)
-            speed = 400000; // Max speed is 400 kHz
-
-        i2c_open((i2c_handle_t*)handle->bus, speed);
         
         if(i2c_find((i2c_handle_t*)handle->bus, handle->busAddr))
         {
-            i2c_close((i2c_handle_t*)handle->bus);
 
             #ifdef DEBUG
             Serial.println("[DEBUG] Failed to init I2C");
@@ -142,11 +134,6 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init SPI");
         #endif
-
-        if (speed > 5500000)
-            speed = 5500000; // Max speed is 5.5 MHz
-
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_0, SPI_BIT_ORDER_MSB);
     }
     else if(handle->busType == GNSS_UART)
     {
@@ -154,13 +141,6 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
         Serial.println("[DEBUG] Init UART");
         #endif
 
-        if(serial_open((serial_handle_t*)handle->bus, speed, UART_TYPE_BASIC))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to open UART");
-            #endif
-            return 2;
-        }
         #ifdef ADD_MEMORY
         // Need to increase buffer because native 64 bytes on Teensy 4.1 is too low
         serial_buffer_read_add((serial_handle_t*)handle->bus, uart_buff, SERIAL_RX_BUFFER_SIZE);
@@ -208,6 +188,7 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
     handle->ubxNavTimeglo = NULL;
     handle->ubxNavTimegps = NULL;
     handle->ubxNavTimels = NULL;
+    handle->ubxNavTimenavic = NULL;
     handle->ubxNavTimeqzss = NULL;
     handle->ubxNavTimeutc = NULL;
     handle->ubxNavVelecef = NULL;
@@ -219,6 +200,8 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
     handle->ubxRxmMeasx = NULL;
     handle->ubxRxmRlm = NULL;
     handle->ubxRxmSfrbx = NULL;
+    handle->ubxSecSig = NULL;
+    handle->ubxSecSiglog = NULL;
     handle->ubxSecUniqid = NULL;
     handle->ubxTimTm2 = NULL;
     handle->ubxTimTp = NULL;
@@ -231,9 +214,12 @@ uint8_t gnss_init(gnss_t *handle, uint32_t speed, uint8_t mainTalker)
     handle->ubxMonGnss = NULL;
     handle->ubxMonHw3 = NULL;
     handle->ubxMonPatch = NULL;
+    handle->ubxMonRcvrstat = NULL;
     handle->ubxMonRf = NULL;
     handle->ubxMonSpan = NULL;
     handle->ubxMonVer = NULL;
+    handle->ubxSecSig = NULL;
+    handle->ubxSecSiglog = NULL;
 
     return 0;
 
@@ -2710,6 +2696,43 @@ uint8_t gnss_set_msg_auto(gnss_t *handle, uint16_t msg, uint8_t period, uint8_t 
                     break;
             }
             break;
+        case GNSS_UBX_NAV_TIMENAVIC:
+            if ((handle->ubxNavTimenavic == NULL) && (period != 0))
+            {
+                handle->ubxNavTimenavic = (gnss_ubx_nav_timenavic_t *)malloc(sizeof(gnss_ubx_nav_timenavic_t));
+                
+                if (handle->ubxNavTimenavic == NULL)
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to allocate initial memory for UBX-NAV-TIMENAVIC message");
+                    #endif
+                    return 3;
+                }
+
+                handle->ubxNavTimenavic->periodic = true;
+
+            }
+            else if ((handle->ubxNavTimenavic != NULL) && (period == 0))
+                handle->ubxNavTimenavic->periodic = false;
+            else if ((handle->ubxNavTimenavic != NULL) && (period != 0))
+                handle->ubxNavTimenavic->periodic = true;
+
+            switch (peripheral)
+            {
+                case 0: // I2C
+                    key = GNSS_CFG_MSGOUT_UBX_NAV_TIMENAVIC_I2C;
+                    break;
+                case 1: // UART
+                    key = GNSS_CFG_MSGOUT_UBX_NAV_TIMENAVIC_UART1;
+                    break;
+                case 2: //SPI
+                    key = GNSS_CFG_MSGOUT_UBX_NAV_TIMENAVIC_SPI;
+                    break;
+                default:
+                    return 4;
+                    break;
+            }
+            break;
         case GNSS_UBX_NAV_TIMEQZSS:
             if ((handle->ubxNavTimeqzss == NULL) && (period != 0))
             {
@@ -3037,6 +3060,80 @@ uint8_t gnss_set_msg_auto(gnss_t *handle, uint16_t msg, uint8_t period, uint8_t 
                     break;
                 case 2: //SPI
                     key = GNSS_CFG_MSGOUT_UBX_RXM_MEASX_SPI;
+                    break;
+                default:
+                    return 4;
+                    break;
+            }
+            break;
+        case GNSS_UBX_SEC_SIG:
+            if ((handle->ubxSecSig == NULL) && (period != 0))
+            {
+                handle->ubxSecSig = (gnss_ubx_sec_sig_t *)malloc(sizeof(gnss_ubx_sec_sig_t));
+                
+                if (handle->ubxSecSig == NULL)
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to allocate initial memory for UBX-SEC-SIG message");
+                    #endif
+                    return 3;
+                }
+
+                handle->ubxSecSig->periodic = true;
+
+            }
+            else if ((handle->ubxSecSig != NULL) && (period == 0))
+                handle->ubxSecSig->periodic = false;
+            else if ((handle->ubxSecSig != NULL) && (period != 0))
+                handle->ubxSecSig->periodic = true;
+
+            switch (peripheral)
+            {
+                case 0: // I2C
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIG_I2C;
+                    break;
+                case 1: // UART
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIG_UART1;
+                    break;
+                case 2: //SPI
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIG_SPI;
+                    break;
+                default:
+                    return 4;
+                    break;
+            }
+            break;
+        case GNSS_UBX_SEC_SIGLOG:
+            if ((handle->ubxSecSiglog == NULL) && (period != 0))
+            {
+                handle->ubxSecSiglog = (gnss_ubx_sec_siglog_t *)malloc(sizeof(gnss_ubx_sec_siglog_t));
+                
+                if (handle->ubxSecSiglog == NULL)
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Failed to allocate initial memory for UBX-SEC-SIGLOG message");
+                    #endif
+                    return 3;
+                }
+
+                handle->ubxSecSiglog->periodic = true;
+
+            }
+            else if ((handle->ubxSecSiglog != NULL) && (period == 0))
+                handle->ubxSecSiglog->periodic = false;
+            else if ((handle->ubxSecSiglog != NULL) && (period != 0))
+                handle->ubxSecSiglog->periodic = true;
+
+            switch (peripheral)
+            {
+                case 0: // I2C
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIGLOG_I2C;
+                    break;
+                case 1: // UART
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIGLOG_UART1;
+                    break;
+                case 2: //SPI
+                    key = GNSS_CFG_MSGOUT_UBX_SEC_SIGLOG_SPI;
                     break;
                 default:
                     return 4;
@@ -3390,12 +3487,11 @@ uint8_t gnss_set_nav_rate(gnss_t *handle, uint16_t meas, uint16_t soln, uint8_t 
  * @param polarity 0: active high, 1: active low.
  * @param threshold Threshold of 8 bytes to trigger TXREADY. Number of 8 bytes, so a value of 5 = 40 byte threshold. Should not be set above 256 8-byte chunks
  * @param interface 0: I2C, 1: SPI
- * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  * @note Does not reenable previously disabled primary function upon making a new selection.
  ****************************************************************************/
-uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t threshold, uint8_t interface, uint8_t chip)
+uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t threshold, uint8_t interface)
 {
 
     /*
@@ -3429,6 +3525,12 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
         6: TIMEPULSE
         8: EXTINT/Wheel Tick
         16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (DAN-F10N):
+        0: RXD
+        1: TXD
+        4: TIMEPULSE
+        5: EXTINT
     */
 
     bool uart = false;
@@ -3437,7 +3539,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
     bool timepulse = false;
     bool extint = false;
 
-    if (chip == GNSS_SAM_M10Q)
+    if (handle->rcvr == GNSS_SAM_M10Q)
     {
         if ((pin == 0) || (pin == 1))
             uart = true;
@@ -3448,7 +3550,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
         else if (pin == 5)
             extint = true;
     }
-    else if (chip == GNSS_NEO_M9N)
+    else if (handle->rcvr == GNSS_NEO_M9N)
     {
         if ((pin == 1) || (pin == 2))
         {
@@ -3465,7 +3567,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
         else if (pin == 7)
             extint = true;
     }
-    else if (chip == GNSS_NEO_M9V)
+    else if (handle->rcvr == GNSS_NEO_M9V)
     {
         if ((pin == 1) || (pin == 2))
             {
@@ -3480,6 +3582,15 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
         else if (pin == 6)
             timepulse = true;
         else if (pin == 8)
+            extint = true;
+    }
+    else if (handle->rcvr == GNSS_DAN_F10N)
+    {
+        if ((pin == 0) || (pin == 1))
+            uart = true;
+        else if (pin == 4)
+            timepulse = true;
+        else if (pin == 5)
             extint = true;
     }
 
@@ -3539,7 +3650,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
 
         dat = 0x00;
 
-        if (chip == GNSS_NEO_M9V)
+        if (handle->rcvr == GNSS_NEO_M9V)
         {
             // CFG-TP-TP2-ENA
             if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, &dat, 1))
@@ -3568,7 +3679,7 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
     {
         // If pin is part of EXTINT, disable EXTINT pin per datasheet
 
-        if (chip == GNSS_NEO_M9V)
+        if (handle->rcvr == GNSS_NEO_M9V)
         {
             dat = 0x00;
 
@@ -3670,13 +3781,12 @@ uint8_t gnss_enable_rdy(gnss_t *handle, uint8_t pin, bool polarity, uint8_t thre
  * @brief Set CFG-BATCH for batch messaging functionality
  * @param handle Handle for ublox gnss module.
  * @param batchCfg Pointer to Batch Configuration Object
- * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  * 2: Failed to allocate memory for messages
  * @note Does not reenable previously disabled primary function upon making a new selection.
  ****************************************************************************/
-uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
+uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg)
 {
 
     /*
@@ -3710,6 +3820,12 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
         6: TIMEPULSE
         8: EXTINT/Wheel Tick
         16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (DAN-F10N):
+        0: RXD
+        1: TXD
+        4: TIMEPULSE
+        5: EXTINT
     */
 
     uint8_t data[2];
@@ -3722,7 +3838,7 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
         bool timepulse = false;
         bool extint = false;
 
-        if (chip == GNSS_SAM_M10Q)
+        if (handle->rcvr == GNSS_SAM_M10Q)
         {
             if ((batchCfg->pioID == 0) || (batchCfg->pioID == 1))
                 uart = true;
@@ -3733,7 +3849,7 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
             else if (batchCfg->pioID == 5)
                 extint = true;
         }
-        else if (chip == GNSS_NEO_M9N)
+        else if (handle->rcvr == GNSS_NEO_M9N)
         {
             if ((batchCfg->pioID == 1) || (batchCfg->pioID == 2))
             {
@@ -3750,7 +3866,7 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
             else if (batchCfg->pioID == 7)
                 extint = true;
         }
-        else if (chip == GNSS_NEO_M9V)
+        else if (handle->rcvr == GNSS_NEO_M9V)
         {
             if ((batchCfg->pioID == 1) || (batchCfg->pioID == 2))
                 {
@@ -3765,6 +3881,15 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
             else if (batchCfg->pioID == 6)
                 timepulse = true;
             else if (batchCfg->pioID == 8)
+                extint = true;
+        }
+        else if (handle->rcvr == GNSS_DAN_F10N)
+        {
+            if ((batchCfg->pioID == 0) || (batchCfg->pioID == 1))
+                uart = true;
+            else if (batchCfg->pioID == 4)
+                timepulse = true;
+            else if (batchCfg->pioID == 5)
                 extint = true;
         }
 
@@ -3821,7 +3946,7 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
             // If pin is part of TIMEPULSE, disable TIMEPULSE pin per datasheet
 
             data[0] = 0x00;
-            if (chip == GNSS_NEO_M9V)
+            if (handle->rcvr == GNSS_NEO_M9V)
             {
                 // CFG-TP-TP2-ENA
                 if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_TP_TP2_ENA, data, 1))
@@ -3850,7 +3975,7 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
         {
             // If pin is part of EXTINT, disable EXTINT pin per datasheet
             
-            if (chip == GNSS_NEO_M9V)
+            if (handle->rcvr == GNSS_NEO_M9V)
             {
                 data[0] = 0x00;
 
@@ -4030,11 +4155,10 @@ uint8_t gnss_set_batch(gnss_t *handle, gnss_batch_cfg_t *batchCfg, uint8_t chip)
  * @brief Set Time Pulse Configuration
  * @param handle Handle for ublox gnss module.
  * @param pulseCfg Pointer to Time Pulse Configuration Object
- * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  ****************************************************************************/
-uint8_t gnss_set_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg, uint8_t chip)
+uint8_t gnss_set_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg)
 {
 
     // Write Values
@@ -4069,7 +4193,7 @@ uint8_t gnss_set_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg, uint8_t chip)
         return 1;
     }
 
-    if (chip == GNSS_NEO_M9V)
+    if (handle->rcvr == GNSS_NEO_M9V)
     {
 
             data[0] = pulseCfg->period & 0xFF;
@@ -4425,11 +4549,10 @@ uint8_t gnss_set_pulse(gnss_t *handle, gnss_pulse_cfg_t *pulseCfg, uint8_t chip)
  * @brief Set Power Save Mode Configuration
  * @param handle Handle for ublox gnss module.
  * @param psmCfg Pointer to Power Save Mode Configuration Object
- * @param chip Ublox product used - necessary to auto-disable the correct function
  * @return 0: Success
  * 1: Failed to set configuration data
  ****************************************************************************/
-uint8_t gnss_set_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg, uint8_t chip)
+uint8_t gnss_set_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg)
 {
 
     // Write Values
@@ -4578,7 +4701,7 @@ uint8_t gnss_set_psm(gnss_t *handle, gnss_psm_cfg_t *psmCfg, uint8_t chip)
         return 1;
     }
     
-    if ((chip == GNSS_NEO_M9N) || (chip == GNSS_NEO_M9V))
+    if ((handle->rcvr == GNSS_NEO_M9N) || (handle->rcvr == GNSS_NEO_M9V))
     {
         data[0] = psmCfg->extIntSel;
         if(gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_PM_EXTINTSEL, data, 0x01))
@@ -4676,62 +4799,217 @@ uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
     * 
     * Requires at least one GNSS enabled with at least one child signal
     * 
-    * Generally, the individual signals should be disabled first before the GNSS system
+    * DAN-F10N:
+    * Dual-band must be enabled - cannot enable single band on individual constellations (per datasheet 2.1.2)
+    * - QZSS_L1S_ENA can be off any configuration
+    * - NAVIC_ENA can be enabled while NAVIC_L5_ENA is disabled
+    * - SBAS_ENA can be enabled while SBAS_L1CA_ENA is disabled
+    * Cannot turn-off bands while constellation is enabled (e.g. Cannot disable GAL_E1_ENA while GAL_ENA is still enabled)
+    * - QZSS_L1S_ENA can be turned off anytime
+    * - NAVIC_L5_ENA can be turned off at anytime
+    * - SBAS_L1CA_ENA can be turned off at anytime
+    * - GPS bands cannot be turned off at anytime (but GPS_ENA can be)
     */
 
     // Check for Invalid Signal Configurations
 
-    if ((!signalCfg->gps_ena || !signalCfg->gps_l1ca_ena) && ((signalCfg->qzss_l1ca_ena || signalCfg->qzss_l1s_ena || signalCfg->qzss_ena) || (signalCfg->sbas_ena || signalCfg->sbas_l1ca_ena)))
+    if (handle->rcvr == GNSS_DAN_F10N)
     {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Invalid signal configuration");
-        #endif
-        return 2;
-    }
 
-    else if (signalCfg->bds_ena && signalCfg->bds_b1_ena)
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Invalid signal configuration");
-        #endif
-        return 2;
+        if (!signalCfg->gps_ena && (signalCfg->qzss_ena || (signalCfg->navic_ena && signalCfg->navic_l5_ena))) // Technically the receiver will let you do it, but it's non-functional
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->gps_ena && !(signalCfg->gps_l1ca_ena && signalCfg->gps_l5_ena))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (!signalCfg->gps_l1ca_ena && !signalCfg->gps_l5_ena)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->gal_ena && (!(signalCfg->gal_e1_ena && signalCfg->gal_e5a_ena) && !(!signalCfg->gal_e1_ena && !signalCfg->gal_e5a_ena)))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->qzss_ena && !(signalCfg->qzss_l1ca_ena && signalCfg->qzss_l5_ena))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->bds_ena && signalCfg->bds_b1_ena)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->bds_ena && (!(signalCfg->bds_b1c_ena && signalCfg->bds_b2a_ena) && !(!signalCfg->bds_b1c_ena && !signalCfg->bds_b2a_ena)))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (!signalCfg->gps_ena && (!signalCfg->gal_ena || (signalCfg->gal_ena && !(signalCfg->gal_e1_ena && signalCfg->gal_e5a_ena))) && (!signalCfg->bds_ena || (signalCfg->bds_ena && !(signalCfg->bds_b1c_ena && signalCfg->bds_b2a_ena)))) // No constellations enabled
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
     }
-    else if (signalCfg->bds_ena && signalCfg->bds_b1_ena)
+    else
     {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Invalid signal configuration");
-        #endif
-        return 2;
+        if ((!signalCfg->gps_ena || !signalCfg->gps_l1ca_ena) && ((signalCfg->qzss_l1ca_ena || signalCfg->qzss_l1s_ena || signalCfg->qzss_ena) || (signalCfg->sbas_ena || signalCfg->sbas_l1ca_ena)))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (signalCfg->bds_ena && signalCfg->bds_b1_ena)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (!signalCfg->qzss_l1ca_ena && signalCfg->qzss_l1s_ena)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
+        else if (!(signalCfg->gps_ena && signalCfg->gps_l1ca_ena) && !(signalCfg->gal_ena && signalCfg->gal_e1_ena) && !(signalCfg->bds_ena || signalCfg->bds_b1c_ena || signalCfg->bds_b1_ena)
+        && !(signalCfg->qzss_ena && signalCfg->qzss_l1ca_ena) && !(signalCfg->glo_ena && signalCfg->glo_l1_ena))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Invalid signal configuration");
+            #endif
+            return 2;
+        }
     }
-    else if (!signalCfg->qzss_l1ca_ena && signalCfg->qzss_l1s_ena)
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Invalid signal configuration");
-        #endif
-        return 2;
-    }
-    else if (!(signalCfg->gps_ena && signalCfg->gps_l1ca_ena) && !(signalCfg->gal_ena && signalCfg->gal_e1_ena) && !(signalCfg->bds_ena || signalCfg->bds_b1c_ena || signalCfg->bds_b1_ena)
-     && !(signalCfg->qzss_ena && signalCfg->qzss_l1ca_ena) && !(signalCfg->glo_ena && signalCfg->glo_l1_ena))
-    {
-        #ifdef DEBUG
-        Serial.println("[DEBUG] Invalid signal configuration");
-        #endif
-        return 2;
-    }
-
-    // First, enable signals that will be enabled to avoid accidentally disabling all signals
 
     uint8_t data = 0x01;
 
     timer_handle_t gen_timer;
     timer_init(&gen_timer, 500000); // 0.5s per datasheet
 
-    if (signalCfg->gps_l1ca_ena)
+    // Process: Turn-on GPS to prevent invalid configuration (due to no constellations or QZSS/NAVIC), assume all constellations have to be updated, lastly update GPS
+
+    data = 0x01;
+
+    // Turn on GPS so there's at least one constellation active to prevent invalid configuraiton
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01)) // Individual GPS signals cannot be disabled on DAN-F10N
     {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_L1CA_ENA, &data, 0x01))
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to enable GNSS_CFG_SIGNAL_GPS_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    /* SBAS */
+
+    if (signalCfg->sbas_ena)
+        data = 0x01;
+    else
+        data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_ENA, &data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_SBAS_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (signalCfg->sbas_l1ca_ena)
+        data = 0x01;
+    else
+        data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_L1CA_ENA, &data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_SBAS_L1CA_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    /* GAL */
+
+    data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_ENA, &data, 0x01)) // Disable gal_ena first
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GAL_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (signalCfg->gal_e1_ena)
+        data = 0x01;
+    else
+        data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_E1_ENA, &data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GAL_E1_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (handle->rcvr == GNSS_DAN_F10N)
+    {
+
+        if (signalCfg->gal_e5a_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_E5A_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GPS_L1CA_ENA");
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GAL_E5A_ENA");
             #endif
             return 1;
         }
@@ -4740,242 +5018,241 @@ uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
         while (!timer_check_exp(&gen_timer));
             ;
     }
-    if (signalCfg->gps_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GPS_ENA");
-            #endif
-            return 1;
-        }
 
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-
-    }
-    if (signalCfg->sbas_l1ca_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_L1CA_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_SBAS_L1CA_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->sbas_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_SBAS_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->gal_e1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_E1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GAL_E1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
     if (signalCfg->gal_ena)
     {
+
+        data = 0x01;
+
         if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GAL_ENA");
+            Serial.println("[DEBUG] Failed to enable GNSS_CFG_SIGNAL_GAL_ENA");
             #endif
             return 1;
         }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->bds_b1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_B1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->bds_b1c_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1C_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_B1C_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->bds_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->qzss_l1s_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1S_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_L1S_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->qzss_l1ca_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1CA_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_L1CA_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->qzss_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->glo_l1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_L1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GLO_L1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (signalCfg->glo_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GLO_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
 
-    // Next, disable signals if specified
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+    // Else leave disabled
+
+    /* BDS */
 
     data = 0x00;
 
-    if (!signalCfg->qzss_l1s_ena)
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_ENA, &data, 0x01)) // Disable bds_ena first
     {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1S_ENA, &data, 0x01))
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1_ENA, &data, 0x01)) // Disable bds_b1 for later
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_B1_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if ((handle->rcvr != GNSS_NEO_M9N) || (handle->rcvr != GNSS_NEO_M9V))
+    {
+
+        if (signalCfg->bds_b1c_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1C_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_L1S_ENA");
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_BDS_B1C_ENA");
             #endif
             return 1;
         }
-        
+
         timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
+        while (!timer_check_exp(&gen_timer));
             ;
-            
     }
-    if (!signalCfg->qzss_l1ca_ena)
+
+    if (handle->rcvr == GNSS_DAN_F10N)
     {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1CA_ENA, &data, 0x01))
+
+        if (signalCfg->bds_b2a_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B2A_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_L1CA_ENA");
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_BDS_B2A_ENA");
             #endif
             return 1;
         }
-        
+
         timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
+        while (!timer_check_exp(&gen_timer));
             ;
-            
     }
-    if (!signalCfg->qzss_ena)
+
+    if (signalCfg->bds_ena)
     {
+
+        data = 0x01;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to enable GNSS_CFG_SIGNAL_BDS_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+    // Else leave disabled
+
+    if (signalCfg->bds_b1_ena)
+    {
+
+        data = 0x01;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to enable GNSS_CFG_SIGNAL_BDS_B1_ENA");
+            #endif
+            return 1;
+        }
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+    // Else leave disabled
+
+    /* QZSS */
+
+    data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_ENA, &data, 0x01)) // Disable gal_ena first
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (signalCfg->qzss_l1ca_ena)
+        data = 0x01;
+    else
+        data = 0x00;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1CA_ENA, &data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_QZSS_L1CA_ENA");
+        #endif
+        return 1;
+    }
+
+    timer_reset(&gen_timer);
+    while (!timer_check_exp(&gen_timer));
+        ;
+
+    if (handle->rcvr == GNSS_DAN_F10N)
+    {
+
+        if (signalCfg->qzss_l5_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L5_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_QZSS_L5_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+
+    if (signalCfg->qzss_ena)
+    {
+
+        data = 0x01;
+
         if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_QZSS_ENA");
+            Serial.println("[DEBUG] Failed to enable GNSS_CFG_SIGNAL_QZSS_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+    // Else leave disabled
+
+    if (handle->rcvr != GNSS_NEO_M9N)
+    {
+
+        if (signalCfg->qzss_l1s_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_QZSS_L1S_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_QZSS_L1S_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+    }
+
+    /* GLONASS */
+
+    if (handle->rcvr != GNSS_DAN_F10N)
+    {
+
+        if (signalCfg->glo_l1_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_L1_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GLO_L1_ENA");
             #endif
             return 1;
         }
@@ -4983,26 +5260,72 @@ uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
         timer_reset(&gen_timer);
         while (!timer_check_exp(&gen_timer))
             ;
-            
-    }
-    if (!signalCfg->gps_l1ca_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_L1CA_ENA, &data, 0x01))
+                
+        if (signalCfg->glo_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_ENA, &data, 0x01))
         {
             #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GPS_L1CA_ENA");
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GLO_ENA");
+            #endif
+            return 1;
+        }
+        
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer))
+            ;
+    }
+
+    /* NAVIC */
+    if (handle->rcvr == GNSS_DAN_F10N)
+    {
+
+        if (signalCfg->navic_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_NAVIC_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_NAVIC_ENA");
             #endif
             return 1;
         }
 
         timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
+        while (!timer_check_exp(&gen_timer));
             ;
 
+        if (signalCfg->navic_l5_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_NAVIC_L5_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_NAVIC_L5_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
     }
-    if (!signalCfg->gps_ena)
+
+    /* GPS */
+
+    if (handle->rcvr != GNSS_DAN_F10N)
     {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01))
+
+        data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01)) // Disable gps_ena first
         {
             #ifdef DEBUG
             Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GPS_ENA");
@@ -5011,144 +5334,63 @@ uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
         }
 
         timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
+        while (!timer_check_exp(&gen_timer));
+            ;
+
+        if (signalCfg->gps_l1ca_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_L1CA_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GPS_L1CA_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
+            ;
+
+        if (signalCfg->gps_ena)
+            data = 0x01;
+        else
+            data = 0x00;
+
+        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to update GNSS_CFG_SIGNAL_GPS_ENA");
+            #endif
+            return 1;
+        }
+
+        timer_reset(&gen_timer);
+        while (!timer_check_exp(&gen_timer));
             ;
 
     }
-    if (!signalCfg->sbas_l1ca_ena)
+    else
     {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_L1CA_ENA, &data, 0x01))
+        if (!signalCfg->gps_ena)
         {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_SBAS_L1CA_ENA");
-            #endif
-            return 1;
+            data = 0x00;
+
+            if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_ENA, &data, 0x01)) // Individual GPS signals cannot be disabled on DAN-F10N
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GPS_ENA");
+                #endif
+                return 1;
+            }
+
+            timer_reset(&gen_timer);
+            while (!timer_check_exp(&gen_timer));
+                ;
         }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->sbas_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_SBAS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_SBAS_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->gal_e1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_E1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GAL_E1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->gal_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GAL_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GAL_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->bds_b1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_B1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->bds_b1c_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_B1C_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_B1C_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->bds_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_BDS_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_BDS_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->glo_l1_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_L1_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GLO_L1_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
-    }
-    if (!signalCfg->glo_ena)
-    {
-        if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GLO_ENA, &data, 0x01))
-        {
-            #ifdef DEBUG
-            Serial.println("[DEBUG] Failed to disable GNSS_CFG_SIGNAL_GLO_ENA");
-            #endif
-            return 1;
-        }
-        
-        timer_reset(&gen_timer);
-        while (!timer_check_exp(&gen_timer))
-            ;
-            
+        // Else leave enabled
     }
 
     return 0;
@@ -5458,6 +5700,12 @@ uint8_t gnss_set_geofencing(gnss_t *handle, gnss_geofence_cfg_t *geoCfg, uint8_t
         6: TIMEPULSE
         8: EXTINT/Wheel Tick
         16: LNA_EN
+
+        Pin number as specified in UBX-MON-HW3 as PIO no. (DAN-F10N):
+        0: RXD
+        1: TXD
+        4: TIMEPULSE
+        5: EXTINT
     */
 
     bool uart = false;
@@ -5509,6 +5757,15 @@ uint8_t gnss_set_geofencing(gnss_t *handle, gnss_geofence_cfg_t *geoCfg, uint8_t
         else if (geoCfg->pin == 6)
             timepulse = true;
         else if (geoCfg->pin == 8)
+            extint = true;
+    }
+    else if (chip == GNSS_DAN_F10N)
+    {
+        if ((geoCfg->pin == 0) || (geoCfg->pin == 1))
+            uart = true;
+        else if (geoCfg->pin == 4)
+            timepulse = true;
+        else if (geoCfg->pin == 5)
             extint = true;
     }
 
@@ -5936,6 +6193,8 @@ static uint8_t gnss_tx(gnss_t *handle, uint8_t *data, uint8_t bytes)
             return 1;
         }
 
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
+
         if (i2c_write((i2c_handle_t*)handle->bus, data, bytes))
         {
             #ifdef DEBUG
@@ -6128,6 +6387,8 @@ uint8_t gnss_rx(gnss_t *handle)
         uint8_t regAddr = 0xFD; // Register of first byte of message length
 
         uint8_t len[2];
+
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
         
         if (i2c_read_reg((i2c_handle_t*)handle->bus, &regAddr, 0x01, len, 0x02))
         {
@@ -6237,6 +6498,7 @@ uint8_t gnss_rx(gnss_t *handle)
             Serial.print(handle->buffer[i]);
             Serial.print(" ");
         }
+        Serial.println();
         #endif
     }
 
@@ -11835,6 +12097,74 @@ uint8_t gnss_parse_messages(gnss_t *handle)
                 #endif
                 break;
             }
+            case GNSS_UBX_NAV_TIMENAVIC: // UBX-NAV-TIMENAVIC
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-NAV-TIMENAVIC");
+                #endif
+
+                // Allocate memory for the message if not already done
+                if (handle->ubxNavTimenavic == NULL)
+                {
+                    gnss_ubx_nav_timenavic_t *ptr = (gnss_ubx_nav_timenavic_t *)malloc(sizeof(gnss_ubx_nav_timenavic_t));
+                    
+                    if (ptr == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Memory allocation failed for UBX-NAV-TIMENAVIC");
+                        #endif
+                        break;
+                    }
+
+                    handle->ubxNavTimenavic = ptr;
+                }
+
+                gnss_ubx_nav_timenavic_t *msg = handle->ubxNavTimenavic;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                timestamp = getUByte32_LEnd(message->buffer, offset);
+                if (timestamp == msg->iTOW)
+                {
+                    msg->stale = true;
+                    break;
+                }
+                else
+                    msg->stale = false;
+
+                msg->iTOW = timestamp;
+                msg->navicTow = getUByte32_LEnd(message->buffer, offset + 4);
+                msg->fNavicTow = getIByte32_LEnd(message->buffer, offset + 8);
+                msg->navicWno = getIByte16_LEnd(message->buffer, offset + 12);
+                msg->leapS = message->buffer[offset + 14];
+                msg->navicTowValid = message->buffer[offset + 15] & 0x01;
+                msg->navicWnoValid = (message->buffer[offset + 15] >> 1) & 0x01;
+                msg->leapSValid = (message->buffer[offset + 15] >> 2) & 0x01;
+                msg->tAcc = getUByte32_LEnd(message->buffer, offset + 16);
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] iTOW: "); Serial.println(msg->iTOW);
+                Serial.print("[DEBUG] navicTow: "); Serial.println(msg->navicTow);
+                Serial.print("[DEBUG] fNavicTow: "); Serial.println(msg->fNavicTow);
+                Serial.print("[DEBUG] navicWno: "); Serial.println(msg->navicWno);
+                Serial.print("[DEBUG] leapS: "); Serial.println(msg->leapS);
+                Serial.print("[DEBUG] navicTowValid: "); Serial.println(msg->navicTowValid);
+                Serial.print("[DEBUG] navicWnoValid: "); Serial.println(msg->navicWnoValid);
+                Serial.print("[DEBUG] leapSValid: "); Serial.println(msg->leapSValid);
+                Serial.print("[DEBUG] tAcc: "); Serial.println(msg->tAcc);
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
             case GNSS_UBX_NAV_TIMEQZSS: // UBX-NAV-TIMEQZSS
             {
                 #ifdef DEBUG
@@ -12582,6 +12912,122 @@ uint8_t gnss_parse_messages(gnss_t *handle)
 
                 #ifdef DEBUG
                 Serial.println();
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
+            case GNSS_UBX_SEC_SIG: // UBX-SEC-SIG
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-SEC-SIG");
+                #endif
+
+                // Allocate memory for the message if not already done
+                if (handle->ubxSecSig == NULL)
+                {
+                    gnss_ubx_sec_sig_t *ptr = (gnss_ubx_sec_sig_t *)malloc(sizeof(gnss_ubx_sec_sig_t));
+                    
+                    if (ptr == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Memory allocation failed for UBX-SEC-SIG");
+                        #endif
+                        break;
+                    }
+
+                    handle->ubxSecSig = ptr;
+                }
+
+                gnss_ubx_sec_sig_t *msg = handle->ubxSecSig;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                msg->stale = false;
+
+                msg->version = message->buffer[offset];
+                msg->jamDetEna = message->buffer[offset + 4] & 0x01;
+                msg->jammingState = (message->buffer[offset + 4] >> 1) & 0x03;
+                msg->spfDetEna = message->buffer[offset + 8] & 0x01;
+                msg->spoofingState = (message->buffer[offset + 8] >> 1) & 0x07;
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] version: "); Serial.println(msg->version);
+                Serial.print("[DEBUG] jamDetEnabled: "); Serial.println(msg->jamDetEna);
+                Serial.print("[DEBUG] jammingState: "); Serial.println(msg->jammingState);
+                Serial.print("[DEBUG] spfDetEnabled: "); Serial.println(msg->spfDetEna);
+                Serial.print("[DEBUG] spoofingState: "); Serial.println(msg->spoofingState);
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
+            case GNSS_UBX_SEC_SIGLOG: // UBX-SEC-SIGLOG
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-SEC-SIGLOG");
+                #endif
+
+                // Allocate memory for the message if not already done
+                if (handle->ubxSecSiglog == NULL)
+                {
+                    gnss_ubx_sec_siglog_t *ptr = (gnss_ubx_sec_siglog_t *)malloc(sizeof(gnss_ubx_sec_siglog_t));
+                    
+                    if (ptr == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Memory allocation failed for UBX-SEC-SIG");
+                        #endif
+                        break;
+                    }
+
+                    handle->ubxSecSiglog = ptr;
+                }
+
+                gnss_ubx_sec_siglog_t *msg = handle->ubxSecSiglog;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                msg->stale = false;
+
+                msg->version = message->buffer[offset];
+                msg->numEvents = message->buffer[offset + 1];
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] version: "); Serial.println(msg->version);
+                Serial.print("[DEBUG] numEvents: "); Serial.println(msg->numEvents);
+                #endif
+
+                for (uint8_t i = 0; i < message->buffer[offset + 1]; i++)
+                {
+                    msg->event[i].timeElapsed = getUByte32_LEnd(message->buffer, offset + 8 + i * 8);
+                    msg->event[i].detectionType = message->buffer[offset + 12 + i * 8];
+                    msg->event[i].eventType = message->buffer[offset + 13 + i * 8];
+
+                    #ifdef DEBUG
+                    Serial.print("[DEBUG] timeElapsed: "); Serial.println(msg->event[i].timeElapsed);
+                    Serial.print("[DEBUG] detectionType: "); Serial.println(msg->event[i].detectionType);
+                    Serial.print("[DEBUG] eventType: "); Serial.println(msg->event[i].eventType);
+                    #endif
+                }
+
+                #ifdef DEBUG
                 Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
                 #endif
                 break;
@@ -13544,6 +13990,332 @@ uint8_t gnss_parse_messages(gnss_t *handle)
                 }
 
                 #ifdef DEBUG
+                Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
+                #endif
+                break;
+            }
+            case GNSS_UBX_MON_RCVRSTAT: // UBX-MON-RCVRSTAT
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] UBX-MON-RCVRSTAT");
+                #endif
+
+                // Allocate memory for the message if not already done
+                if (handle->ubxMonRcvrstat == NULL)
+                {
+                    gnss_ubx_mon_rcvrstat_t *ptr = (gnss_ubx_mon_rcvrstat_t *)malloc(sizeof(gnss_ubx_mon_rcvrstat_t));
+                    
+                    if (ptr == NULL)
+                    {
+                        #ifdef DEBUG
+                        Serial.println("[DEBUG] Memory allocation failed for UBX-MON-RCVRSTAT");
+                        #endif
+                        break;
+                    }
+
+                    handle->ubxMonRcvrstat = ptr;
+                }
+
+                gnss_ubx_mon_rcvrstat_t *msg = handle->ubxMonRcvrstat;
+
+                offset = 6;
+
+                // Check checksum first
+                if (gnss_ubx_checksum(message) != ((message->buffer[message->length - 2] << 8) | message->buffer[message->length - 1]))
+                {
+                    #ifdef DEBUG
+                    Serial.println("[DEBUG] Message failed to pass checksum");
+                    #endif
+                    break;
+                }
+
+                msg->version = message->buffer[offset + 0];
+
+                msg->sigSbasEnVal = message->buffer[offset + 1] & 0x01;
+                msg->sigSbasEnSrc = (message->buffer[offset + 1] >> 1) & 0x07;
+                msg->sigSbasL1caEnVal = (message->buffer[offset + 1] >> 4) & 0x01;
+                msg->sigSbasL1caEnSrc = (message->buffer[offset + 1] >> 5) & 0x07;
+
+                msg->sigNavicEnVal = message->buffer[offset + 2] & 0x01;
+                msg->sigNavicEnSrc = (message->buffer[offset + 2] >> 1) & 0x07;
+                msg->sigNavicL5EnVal = (message->buffer[offset + 2] >> 4) & 0x01;
+                msg->sigNavicL5EnSrc = (message->buffer[offset + 2] >> 5) & 0x07;
+
+                msg->sigGpsEnVal = message->buffer[offset + 4] & 0x01;
+                msg->sigGpsEnSrc = (message->buffer[offset + 4] >> 1) & 0x07;
+                msg->sigGpsL1caEnVal = (message->buffer[offset + 4] >> 4) & 0x01;
+                msg->sigGpsL1caEnSrc = (message->buffer[offset + 4] >> 5) & 0x07;
+
+                msg->sigGpsL1cEnVal = message->buffer[offset + 5] & 0x01;
+                msg->sigGpsL1cEnSrc = (message->buffer[offset + 5] >> 1) & 0x07;
+                msg->sigGpsL2cEnVal = (message->buffer[offset + 5] >> 4) & 0x01;
+                msg->sigGpsL2cEnSrc = (message->buffer[offset + 5] >> 5) & 0x07;
+
+                msg->sigGpsL5EnVal = message->buffer[offset + 6] & 0x01;
+                msg->sigGpsL5EnSrc = (message->buffer[offset + 6] >> 1) & 0x07;
+
+                msg->sigGalEnVal = message->buffer[offset + 8] & 0x01;
+                msg->sigGalEnSrc = (message->buffer[offset + 8] >> 1) & 0x07;
+                msg->sigGalE1EnVal = (message->buffer[offset + 8] >> 4) & 0x01;
+                msg->sigGalE1EnSrc = (message->buffer[offset + 8] >> 5) & 0x07;
+
+                msg->sigGalE5aEnVal = message->buffer[offset + 9] & 0x01;
+                msg->sigGalE5aEnSrc = (message->buffer[offset + 9] >> 1) & 0x07;
+                msg->sigGalE5bEnVal = (message->buffer[offset + 9] >> 4) & 0x01;
+                msg->sigGalE5bEnSrc = (message->buffer[offset + 9] >> 5) & 0x07;
+
+                msg->sigGalE6EnVal = message->buffer[offset + 10] & 0x01;
+                msg->sigGalE6EnSrc = (message->buffer[offset + 10] >> 1) & 0x07;
+
+                msg->sigQzssEnVal = message->buffer[offset + 12] & 0x01;
+                msg->sigQzssEnSrc = (message->buffer[offset + 12] >> 1) & 0x07;
+                msg->sigQzssL1caEnVal = (message->buffer[offset + 12] >> 4) & 0x01;
+                msg->sigQzssL1caEnSrc = (message->buffer[offset + 12] >> 5) & 0x07;
+
+                msg->sigQzssL1cEnVal = message->buffer[offset + 13] & 0x01;
+                msg->sigQzssL1cEnSrc = (message->buffer[offset + 13] >> 1) & 0x07;
+                msg->sigQzssL1sEnVal = (message->buffer[offset + 13] >> 4) & 0x01;
+                msg->sigQzssL1sEnSrc = (message->buffer[offset + 13] >> 5) & 0x07;
+
+                msg->sigQzssL2cEnVal = message->buffer[offset + 14] & 0x01;
+                msg->sigQzssL2cEnSrc = (message->buffer[offset + 14] >> 1) & 0x07;
+                msg->sigQzssL5EnVal = (message->buffer[offset + 14] >> 4) & 0x01;
+                msg->sigQzssL5EnSrc = (message->buffer[offset + 14] >> 5) & 0x07;
+
+                msg->sigBdsEnVal = message->buffer[offset + 16] & 0x01;
+                msg->sigBdsEnSrc = (message->buffer[offset + 16] >> 1) & 0x07;
+                msg->sigBdsB1iEnVal = (message->buffer[offset + 16] >> 4) & 0x01;
+                msg->sigBdsB1iEnSrc = (message->buffer[offset + 16] >> 5) & 0x07;
+
+                msg->sigBdsB1cEnVal = message->buffer[offset + 17] & 0x01;
+                msg->sigBdsB1cEnSrc = (message->buffer[offset + 17] >> 1) & 0x07;
+                msg->sigBdsB2EnVal = (message->buffer[offset + 17] >> 4) & 0x01;
+                msg->sigBdsB2EnSrc = (message->buffer[offset + 17] >> 5) & 0x07;
+
+                msg->sigBdsB2aEnVal = message->buffer[offset + 18] & 0x01;
+                msg->sigBdsB2aEnSrc = (message->buffer[offset + 18] >> 1) & 0x07;
+
+                msg->sigGloEnVal = message->buffer[offset + 20] & 0x01;
+                msg->sigGloEnSrc = (message->buffer[offset + 20] >> 1) & 0x07;
+                msg->sigGloL1EnVal = (message->buffer[offset + 20] >> 4) & 0x01;
+                msg->sigGloL1EnSrc = (message->buffer[offset + 20] >> 5) & 0x07;
+
+                msg->sigGloL2EnVal = message->buffer[offset + 21] & 0x01;
+                msg->sigGloL2EnSrc = (message->buffer[offset + 21] >> 1) & 0x07;
+                msg->sigGloL3EnVal = (message->buffer[offset + 21] >> 4) & 0x01;
+                msg->sigGloL3EnSrc = (message->buffer[offset + 21] >> 5) & 0x07;
+
+                msg->lnaLnaModeRegVal = message->buffer[offset + 22] & 0x07;
+                msg->lnaLnaModeCfgVal = (message->buffer[offset + 22] >> 4) & 0x0F;
+                msg->lnaLnaModeSrc = (message->buffer[offset + 23] >> 5) & 0x07;
+
+                msg->uartEnableVal = message->buffer[offset + 36] & 0x01;
+                msg->uartEnableSrc = (message->buffer[offset + 36] >> 1) & 0x07;
+                msg->uartRemapedVal = (message->buffer[offset + 36] >> 4) & 0x01;
+                msg->uartRemapedSrc = (message->buffer[offset + 36] >> 5) & 0x07;
+
+                msg->uartDataBitsVal = message->buffer[offset + 37] & 0x01;
+                msg->uartDataBitsSrc = (message->buffer[offset + 37] >> 1) & 0x07;
+                msg->uartStopBitsVal = (message->buffer[offset + 37] >> 4) & 0x03;
+                msg->uartStopBitsSrc = ((message->buffer[offset + 37] >> 6) & 0x07) | (message->buffer[offset + 38] & 0x01) << 2;
+
+                msg->uartParityBitsVal = (message->buffer[offset + 38] >> 1) & 0x03;
+                msg->uartParityBitsSrc = (message->buffer[offset + 38] >> 3) & 0x07;
+
+                msg->uartBaudrateVal = getUByte32_LEnd(message->buffer, offset + 40) & 0x000FFFFF;
+                msg->uartBaudrateSrc = (message->buffer[offset + 42] >> 4) & 0x07;
+
+                msg->spiEnableVal = message->buffer[offset + 44] & 0x01;
+                msg->spiEnableSrc = (message->buffer[offset + 44] >> 1) & 0x07;
+                msg->spiExtendedTimeoutVal = (message->buffer[offset + 44] >> 4) & 0x01;
+                msg->spiExtendedTimeoutSrc = (message->buffer[offset + 44] >> 5) & 0x07;
+
+                msg->spiCPolarityVal = message->buffer[offset + 45] & 0x01;
+                msg->spiCPolaritySrc = (message->buffer[offset + 45] >> 1) & 0x07;
+                msg->spiCPhaseVal = (message->buffer[offset + 45] >> 4) & 0x01;
+                msg->spiCPhaseSrc = (message->buffer[offset + 45] >> 5) & 0x07;
+
+                msg->spiMaxFfVal = message->buffer[offset + 46];
+
+                msg->spiMaxFfSrc = message->buffer[offset + 47] & 0x07;
+
+                msg->i2cEnableVal = message->buffer[offset + 48] & 0x01;
+                msg->i2cEnableSrc = (message->buffer[offset + 48] >> 1) & 0x07;
+                msg->i2cExtendedTimeoutVal = (message->buffer[offset + 48] >> 4) & 0x01;
+                msg->i2cExtendedTimeoutSrc = (message->buffer[offset + 48] >> 5) & 0x07;
+
+                msg->i2cRemapVal = message->buffer[offset + 49] & 0x01;
+                msg->i2cRemapSrc = (message->buffer[offset + 49] >> 1) & 0x07;
+                msg->i2cAddressVal = ((message->buffer[offset + 49] >> 4) & 0x0F) | ((message->buffer[offset + 50] & 0x0F) << 4);
+
+                msg->i2cAddressSrc = (message->buffer[offset + 50] >> 4) & 0x07;
+
+                msg->psmOperateModeVal = message->buffer[offset + 53] & 0x03;
+                msg->psmOperateModeSrc = (message->buffer[offset + 53] >> 2) & 0x03;
+                msg->psmOperateModeState = (message->buffer[offset + 53] >> 5) & 0x03;
+
+                msg->antSupSmStatusVal = message->buffer[offset + 54] & 0x03;
+                msg->antSupAPowerVal = (message->buffer[offset + 54] >> 2) & 0x03;
+
+                msg->antSupSwitchPinVal = message->buffer[offset + 55] & 0x1F;
+                msg->antSupSwitchPinSrc = (message->buffer[offset + 55] >> 5) & 0x07;
+
+                msg->antSupShortPinVal = message->buffer[offset + 56] & 0x1F;
+                msg->antSupShortPinSrc = (message->buffer[offset + 56] >> 5) & 0x07;
+
+                msg->antSupOpenPinVal = message->buffer[offset + 57] & 0x1F;
+                msg->antSupOpenPinSrc = (message->buffer[offset + 57] >> 5) & 0x07;
+
+                msg->antSupRecIntPinVal = message->buffer[offset + 62];
+                msg->antSupRecIntPinSrc = (message->buffer[offset + 63] >> 5) & 0x07;
+
+                msg->antSupVoltctrlPinVal = message->buffer[offset + 64] & 0x01;
+                msg->antSupVoltctrlPinSrc = (message->buffer[offset + 64] >> 1) & 0x07;
+                msg->antSupShortDetVal = (message->buffer[offset + 64] >> 4) & 0x01;
+                msg->antSupShortDetSrc = (message->buffer[offset + 64] >> 5) & 0x07;
+
+                msg->antSupShortDetPolVal = message->buffer[offset + 65] & 0x01;
+                msg->antSupShortDetPolSrc = (message->buffer[offset + 65] >> 1) & 0x07;
+                msg->antSupOpenDetVal = (message->buffer[offset + 65] >> 4) & 0x01;
+                msg->antSupOpenDetSrc = (message->buffer[offset + 65] >> 5) & 0x07;
+
+                msg->antSupOpenDetPolVal = message->buffer[offset + 66] & 0x01;
+                msg->antSupOpenDetPolSrc = (message->buffer[offset + 66] >> 1) & 0x07;
+                msg->antSupPwrDownVal = (message->buffer[offset + 66] >> 4) & 0x01;
+                msg->antSupPwrDownSrc = (message->buffer[offset + 66] >> 5) & 0x07;
+
+                msg->antSupPwrDownPolVal = message->buffer[offset + 67] & 0x01;
+                msg->antSupPwrDownPolSrc = (message->buffer[offset + 67] >> 1) & 0x07;
+                msg->antSupRecoverVal = (message->buffer[offset + 67] >> 4) & 0x01;
+                msg->antSupRecoverSrc = (message->buffer[offset + 67] >> 5) & 0x07;
+
+                msg->antSupShortUsVal = getUByte16_LEnd(message->buffer, offset + 68);
+                msg->antSupShortUsSrc = (message->buffer[offset + 71] >> 5) & 0x07;
+
+                #ifdef DEBUG
+                Serial.print("[DEBUG] version: "); Serial.println(msg->version);
+                Serial.print("[DEBUG] sigSbasEnVal: "); Serial.println(msg->sigSbasEnVal);
+                Serial.print("[DEBUG] sigSbasEnSrc: "); Serial.println(msg->sigSbasEnSrc);
+                Serial.print("[DEBUG] sigSbasL1caEnVal: "); Serial.println(msg->sigSbasL1caEnVal);
+                Serial.print("[DEBUG] sigSbasL1caEnSrc: "); Serial.println(msg->sigSbasL1caEnSrc);
+                Serial.print("[DEBUG] sigNavicEnVal: "); Serial.println(msg->sigNavicEnVal);
+                Serial.print("[DEBUG] sigNavicEnSrc: "); Serial.println(msg->sigNavicEnSrc);
+                Serial.print("[DEBUG] sigNavicL5EnVal: "); Serial.println(msg->sigNavicL5EnVal);
+                Serial.print("[DEBUG] sigNavicL5EnSrc: "); Serial.println(msg->sigNavicL5EnSrc);
+                Serial.print("[DEBUG] sigGpsEnVal: "); Serial.println(msg->sigGpsEnVal);
+                Serial.print("[DEBUG] sigGpsEnSrc: "); Serial.println(msg->sigGpsEnSrc);
+                Serial.print("[DEBUG] sigGpsL1caEnVal: "); Serial.println(msg->sigGpsL1caEnVal);
+                Serial.print("[DEBUG] sigGpsL1caEnSrc: "); Serial.println(msg->sigGpsL1caEnSrc);
+                Serial.print("[DEBUG] sigGpsL1cEnVal: "); Serial.println(msg->sigGpsL1cEnVal);
+                Serial.print("[DEBUG] sigGpsL1cEnSrc: "); Serial.println(msg->sigGpsL1cEnSrc);
+                Serial.print("[DEBUG] sigGpsL2cEnVal: "); Serial.println(msg->sigGpsL2cEnVal);
+                Serial.print("[DEBUG] sigGpsL2cEnSrc: "); Serial.println(msg->sigGpsL2cEnSrc);
+                Serial.print("[DEBUG] sigGpsL5EnVal: "); Serial.println(msg->sigGpsL5EnVal);
+                Serial.print("[DEBUG] sigGpsL5EnSrc: "); Serial.println(msg->sigGpsL5EnSrc);
+                Serial.print("[DEBUG] sigGalEnVal: "); Serial.println(msg->sigGalEnVal);
+                Serial.print("[DEBUG] sigGalEnSrc: "); Serial.println(msg->sigGalEnSrc);
+                Serial.print("[DEBUG] sigGalE1EnVal: "); Serial.println(msg->sigGalE1EnVal);
+                Serial.print("[DEBUG] sigGalE1EnSrc: "); Serial.println(msg->sigGalE1EnSrc);
+                Serial.print("[DEBUG] sigGalE5aEnVal: "); Serial.println(msg->sigGalE5aEnVal);
+                Serial.print("[DEBUG] sigGalE5aEnSrc: "); Serial.println(msg->sigGalE5aEnSrc);
+                Serial.print("[DEBUG] sigGalE5bEnVal: "); Serial.println(msg->sigGalE5bEnVal);
+                Serial.print("[DEBUG] sigGalE5bEnSrc: "); Serial.println(msg->sigGalE5bEnSrc);
+                Serial.print("[DEBUG] sigGalE6EnVal: "); Serial.println(msg->sigGalE6EnVal);
+                Serial.print("[DEBUG] sigGalE6EnSrc: "); Serial.println(msg->sigGalE6EnSrc);
+                Serial.print("[DEBUG] sigQzssEnVal: "); Serial.println(msg->sigQzssEnVal);
+                Serial.print("[DEBUG] sigQzssEnSrc: "); Serial.println(msg->sigQzssEnSrc);
+                Serial.print("[DEBUG] sigQzssL1caEnVal: "); Serial.println(msg->sigQzssL1caEnVal);
+                Serial.print("[DEBUG] sigQzssL1caEnSrc: "); Serial.println(msg->sigQzssL1caEnSrc);
+                Serial.print("[DEBUG] sigQzssL1cEnVal: "); Serial.println(msg->sigQzssL1cEnVal);
+                Serial.print("[DEBUG] sigQzssL1cEnSrc: "); Serial.println(msg->sigQzssL1cEnSrc);
+                Serial.print("[DEBUG] sigQzssL1sEnVal: "); Serial.println(msg->sigQzssL1sEnVal);
+                Serial.print("[DEBUG] sigQzssL1sEnSrc: "); Serial.println(msg->sigQzssL1sEnSrc);
+                Serial.print("[DEBUG] sigQzssL2cEnVal: "); Serial.println(msg->sigQzssL2cEnVal);
+                Serial.print("[DEBUG] sigQzssL2cEnSrc: "); Serial.println(msg->sigQzssL2cEnSrc);
+                Serial.print("[DEBUG] sigQzssL5EnVal: "); Serial.println(msg->sigQzssL5EnVal);
+                Serial.print("[DEBUG] sigQzssL5EnSrc: "); Serial.println(msg->sigQzssL5EnSrc);
+                Serial.print("[DEBUG] sigBdsEnVal: "); Serial.println(msg->sigBdsEnVal);
+                Serial.print("[DEBUG] sigBdsEnSrc: "); Serial.println(msg->sigBdsEnSrc);
+                Serial.print("[DEBUG] sigBdsB1iEnVal: "); Serial.println(msg->sigBdsB1iEnVal);
+                Serial.print("[DEBUG] sigBdsB1iEnSrc: "); Serial.println(msg->sigBdsB1iEnSrc);
+                Serial.print("[DEBUG] sigBdsB1cEnVal: "); Serial.println(msg->sigBdsB1cEnVal);
+                Serial.print("[DEBUG] sigBdsB1cEnSrc: "); Serial.println(msg->sigBdsB1cEnSrc);
+                Serial.print("[DEBUG] sigBdsB2EnVal: "); Serial.println(msg->sigBdsB2EnVal);
+                Serial.print("[DEBUG] sigBdsB2EnSrc: "); Serial.println(msg->sigBdsB2EnSrc);
+                Serial.print("[DEBUG] sigBdsB2aEnVal: "); Serial.println(msg->sigBdsB2aEnVal);
+                Serial.print("[DEBUG] sigBdsB2aEnSrc: "); Serial.println(msg->sigBdsB2aEnSrc);
+                Serial.print("[DEBUG] sigGloEnVal: "); Serial.println(msg->sigGloEnVal);
+                Serial.print("[DEBUG] sigGloEnSrc: "); Serial.println(msg->sigGloEnSrc);
+                Serial.print("[DEBUG] sigGloL1EnVal: "); Serial.println(msg->sigGloL1EnVal);
+                Serial.print("[DEBUG] sigGloL1EnSrc: "); Serial.println(msg->sigGloL1EnSrc);
+                Serial.print("[DEBUG] sigGloL2EnVal: "); Serial.println(msg->sigGloL2EnVal);
+                Serial.print("[DEBUG] sigGloL2EnSrc: "); Serial.println(msg->sigGloL2EnSrc);
+                Serial.print("[DEBUG] sigGloL3EnVal: "); Serial.println(msg->sigGloL3EnVal);
+                Serial.print("[DEBUG] sigGloL3EnSrc: "); Serial.println(msg->sigGloL3EnSrc);
+                Serial.print("[DEBUG] lnaLnaModeRegVal: "); Serial.println(msg->lnaLnaModeRegVal);
+                Serial.print("[DEBUG] lnaLnaModeCfgVal: "); Serial.println(msg->lnaLnaModeCfgVal);
+                Serial.print("[DEBUG] lnaLnaModeSrc: "); Serial.println(msg->lnaLnaModeSrc);
+                Serial.print("[DEBUG] uartEnableVal: "); Serial.println(msg->uartEnableVal);
+                Serial.print("[DEBUG] uartEnableSrc: "); Serial.println(msg->uartEnableSrc);
+                Serial.print("[DEBUG] uartRemapedVal: "); Serial.println(msg->uartRemapedVal);
+                Serial.print("[DEBUG] uartRemapedSrc: "); Serial.println(msg->uartRemapedSrc);
+                Serial.print("[DEBUG] uartDataBitsVal: "); Serial.println(msg->uartDataBitsVal);
+                Serial.print("[DEBUG] uartDataBitsSrc: "); Serial.println(msg->uartDataBitsSrc);
+                Serial.print("[DEBUG] uartStopBitsVal: "); Serial.println(msg->uartStopBitsVal);
+                Serial.print("[DEBUG] uartStopBitsSrc: "); Serial.println(msg->uartStopBitsSrc);
+                Serial.print("[DEBUG] uartParityBitsVal: "); Serial.println(msg->uartParityBitsVal);
+                Serial.print("[DEBUG] uartParityBitsSrc: "); Serial.println(msg->uartParityBitsSrc);
+                Serial.print("[DEBUG] uartBaudrateVal: "); Serial.println(msg->uartBaudrateVal);
+                Serial.print("[DEBUG] uartBaudrateSrc: "); Serial.println(msg->uartBaudrateSrc);
+                Serial.print("[DEBUG] spiEnableVal: "); Serial.println(msg->spiEnableVal);
+                Serial.print("[DEBUG] spiEnableSrc: "); Serial.println(msg->spiEnableSrc);
+                Serial.print("[DEBUG] spiExtendedTimeoutVal: "); Serial.println(msg->spiExtendedTimeoutVal);
+                Serial.print("[DEBUG] spiExtendedTimeoutSrc: "); Serial.println(msg->spiExtendedTimeoutSrc);
+                Serial.print("[DEBUG] spiCPolarityVal: "); Serial.println(msg->spiCPolarityVal);
+                Serial.print("[DEBUG] spiCPolaritySrc: "); Serial.println(msg->spiCPolaritySrc);
+                Serial.print("[DEBUG] spiCPhaseVal: "); Serial.println(msg->spiCPhaseVal);
+                Serial.print("[DEBUG] spiCPhaseSrc: "); Serial.println(msg->spiCPhaseSrc);
+                Serial.print("[DEBUG] spiMaxFfVal: "); Serial.println(msg->spiMaxFfVal);
+                Serial.print("[DEBUG] spiMaxFfSrc: "); Serial.println(msg->spiMaxFfSrc);
+                Serial.print("[DEBUG] i2cEnableVal: "); Serial.println(msg->i2cEnableVal);
+                Serial.print("[DEBUG] i2cEnableSrc: "); Serial.println(msg->i2cEnableSrc);
+                Serial.print("[DEBUG] i2cExtendedTimeoutVal: "); Serial.println(msg->i2cExtendedTimeoutVal);
+                Serial.print("[DEBUG] i2cExtendedTimeoutSrc: "); Serial.println(msg->i2cExtendedTimeoutSrc);
+                Serial.print("[DEBUG] i2cRemapVal: "); Serial.println(msg->i2cRemapVal);
+                Serial.print("[DEBUG] i2cRemapSrc: "); Serial.println(msg->i2cRemapSrc);
+                Serial.print("[DEBUG] i2cAddressVal: "); Serial.println(msg->i2cAddressVal);
+                Serial.print("[DEBUG] i2cAddressSrc: "); Serial.println(msg->i2cAddressSrc);
+                Serial.print("[DEBUG] psmOperateModeVal: "); Serial.println(msg->psmOperateModeVal);
+                Serial.print("[DEBUG] psmOperateModeSrc: "); Serial.println(msg->psmOperateModeSrc);
+                Serial.print("[DEBUG] psmOperateModeState: "); Serial.println(msg->psmOperateModeState);
+                Serial.print("[DEBUG] antSupSmStatusVal: "); Serial.println(msg->antSupSmStatusVal);
+                Serial.print("[DEBUG] antSupAPowerVal: "); Serial.println(msg->antSupAPowerVal);
+                Serial.print("[DEBUG] antSupSwitchPinVal: "); Serial.println(msg->antSupSwitchPinVal);
+                Serial.print("[DEBUG] antSupSwitchPinSrc: "); Serial.println(msg->antSupSwitchPinSrc);
+                Serial.print("[DEBUG] antSupShortPinVal: "); Serial.println(msg->antSupShortPinVal);
+                Serial.print("[DEBUG] antSupShortPinSrc: "); Serial.println(msg->antSupShortPinSrc);
+                Serial.print("[DEBUG] antSupOpenPinVal: "); Serial.println(msg->antSupOpenPinVal);
+                Serial.print("[DEBUG] antSupOpenPinSrc: "); Serial.println(msg->antSupOpenPinSrc);
+                Serial.print("[DEBUG] antSupRecIntPinVal: "); Serial.println(msg->antSupRecIntPinVal);
+                Serial.print("[DEBUG] antSupRecIntPinSrc: "); Serial.println(msg->antSupRecIntPinSrc);
+                Serial.print("[DEBUG] antSupVoltctrlPinVal: "); Serial.println(msg->antSupVoltctrlPinVal);
+                Serial.print("[DEBUG] antSupVoltctrlPinSrc: "); Serial.println(msg->antSupVoltctrlPinSrc);
+                Serial.print("[DEBUG] antSupShortDetVal: "); Serial.println(msg->antSupShortDetVal);
+                Serial.print("[DEBUG] antSupShortDetSrc: "); Serial.println(msg->antSupShortDetSrc);
+                Serial.print("[DEBUG] antSupShortDetPolVal: "); Serial.println(msg->antSupShortDetPolVal);
+                Serial.print("[DEBUG] antSupShortDetPolSrc: "); Serial.println(msg->antSupShortDetPolSrc);
+                Serial.print("[DEBUG] antSupOpenDetVal: "); Serial.println(msg->antSupOpenDetVal);
+                Serial.print("[DEBUG] antSupOpenDetSrc: "); Serial.println(msg->antSupOpenDetSrc);
+                Serial.print("[DEBUG] antSupOpenDetPolVal: "); Serial.println(msg->antSupOpenDetPolVal);
+                Serial.print("[DEBUG] antSupOpenDetPolSrc: "); Serial.println(msg->antSupOpenDetPolSrc);
+                Serial.print("[DEBUG] antSupPwrDownVal: "); Serial.println(msg->antSupPwrDownVal);
+                Serial.print("[DEBUG] antSupPwrDownSrc: "); Serial.println(msg->antSupPwrDownSrc);
+                Serial.print("[DEBUG] antSupPwrDownPolVal: "); Serial.println(msg->antSupPwrDownPolVal);
+                Serial.print("[DEBUG] antSupPwrDownPolSrc: "); Serial.println(msg->antSupPwrDownPolSrc);
+                Serial.print("[DEBUG] antSupRecoverVal: "); Serial.println(msg->antSupRecoverVal);
+                Serial.print("[DEBUG] antSupRecoverSrc: "); Serial.println(msg->antSupRecoverSrc);
+                Serial.print("[DEBUG] antSupShortUsVal: "); Serial.println(msg->antSupShortUsVal);
+                Serial.print("[DEBUG] antSupShortUsSrc: "); Serial.println(msg->antSupShortUsSrc);
                 Serial.print("[DEBUG] Checksum: "); Serial.print(message->buffer[message->length - 2]); Serial.print(" "); Serial.println(message->buffer[message->length - 1]);
                 #endif
                 break;
@@ -14555,7 +15327,7 @@ uint8_t gnss_get_msg_info(gnss_t *handle, gnss_info_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_dtm(gnss_t *handle, gnss_nmea_std_dtm_t *message)
+uint8_t gnss_get_nmea_dtm(gnss_t *handle, gnss_nmea_std_dtm_t *message)
 {
 
     // Allocate memory
@@ -14629,7 +15401,7 @@ uint8_t gnss_get_dtm(gnss_t *handle, gnss_nmea_std_dtm_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gbs(gnss_t *handle, gnss_nmea_std_gbs_t *message)
+uint8_t gnss_get_nmea_gbs(gnss_t *handle, gnss_nmea_std_gbs_t *message)
 {
 
     if (handle->nmeaStdGbs == NULL)
@@ -14702,7 +15474,7 @@ uint8_t gnss_get_gbs(gnss_t *handle, gnss_nmea_std_gbs_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gga(gnss_t *handle, gnss_nmea_std_gga_t *message)
+uint8_t gnss_get_nmea_gga(gnss_t *handle, gnss_nmea_std_gga_t *message)
 {
 
     if (handle->nmeaStdGga == NULL)
@@ -14775,7 +15547,7 @@ uint8_t gnss_get_gga(gnss_t *handle, gnss_nmea_std_gga_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gll(gnss_t *handle, gnss_nmea_std_gll_t *message)
+uint8_t gnss_get_nmea_gll(gnss_t *handle, gnss_nmea_std_gll_t *message)
 {
 
     if (handle->nmeaStdGll == NULL)
@@ -14848,7 +15620,7 @@ uint8_t gnss_get_gll(gnss_t *handle, gnss_nmea_std_gll_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gns(gnss_t *handle, gnss_nmea_std_gns_t *message)
+uint8_t gnss_get_nmea_gns(gnss_t *handle, gnss_nmea_std_gns_t *message)
 {
 
     if (handle->nmeaStdGns == NULL)
@@ -14921,7 +15693,7 @@ uint8_t gnss_get_gns(gnss_t *handle, gnss_nmea_std_gns_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_grs(gnss_t *handle, gnss_nmea_std_grs_t *message)
+uint8_t gnss_get_nmea_grs(gnss_t *handle, gnss_nmea_std_grs_t *message)
 {
 
     if (handle->nmeaStdGrs == NULL)
@@ -14998,7 +15770,7 @@ uint8_t gnss_get_grs(gnss_t *handle, gnss_nmea_std_grs_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gsa(gnss_t *handle, gnss_nmea_std_gsa_t *message)
+uint8_t gnss_get_nmea_gsa(gnss_t *handle, gnss_nmea_std_gsa_t *message)
 {
 
     if (handle->nmeaStdGsa == NULL)
@@ -15075,7 +15847,7 @@ uint8_t gnss_get_gsa(gnss_t *handle, gnss_nmea_std_gsa_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gst(gnss_t *handle, gnss_nmea_std_gst_t *message)
+uint8_t gnss_get_nmea_gst(gnss_t *handle, gnss_nmea_std_gst_t *message)
 {
 
     if (handle->nmeaStdGst == NULL)
@@ -15148,7 +15920,7 @@ uint8_t gnss_get_gst(gnss_t *handle, gnss_nmea_std_gst_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gsv(gnss_t *handle, gnss_nmea_std_gsv_t *message)
+uint8_t gnss_get_nmea_gsv(gnss_t *handle, gnss_nmea_std_gsv_t *message)
 {
 
     if (handle->nmeaStdGsv == NULL)
@@ -15221,7 +15993,7 @@ uint8_t gnss_get_gsv(gnss_t *handle, gnss_nmea_std_gsv_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_rmc(gnss_t *handle, gnss_nmea_std_rmc_t *message)
+uint8_t gnss_get_nmea_rmc(gnss_t *handle, gnss_nmea_std_rmc_t *message)
 {
 
     if (handle->nmeaStdRmc == NULL)
@@ -15294,7 +16066,7 @@ uint8_t gnss_get_rmc(gnss_t *handle, gnss_nmea_std_rmc_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_vlw(gnss_t *handle, gnss_nmea_std_vlw_t *message)
+uint8_t gnss_get_nmea_vlw(gnss_t *handle, gnss_nmea_std_vlw_t *message)
 {
 
     if (handle->nmeaStdVlw == NULL)
@@ -15367,7 +16139,7 @@ uint8_t gnss_get_vlw(gnss_t *handle, gnss_nmea_std_vlw_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_vtg(gnss_t *handle, gnss_nmea_std_vtg_t *message)
+uint8_t gnss_get_nmea_vtg(gnss_t *handle, gnss_nmea_std_vtg_t *message)
 {
 
     if (handle->nmeaStdVtg == NULL)
@@ -15440,7 +16212,7 @@ uint8_t gnss_get_vtg(gnss_t *handle, gnss_nmea_std_vtg_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_zda(gnss_t *handle, gnss_nmea_std_zda_t *message)
+uint8_t gnss_get_nmea_zda(gnss_t *handle, gnss_nmea_std_zda_t *message)
 {
 
     if (handle->nmeaStdZda == NULL)
@@ -15513,7 +16285,7 @@ uint8_t gnss_get_zda(gnss_t *handle, gnss_nmea_std_zda_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_position(gnss_t *handle, gnss_nmea_pubx_pos_t *message)
+uint8_t gnss_get_pubx_position(gnss_t *handle, gnss_nmea_pubx_pos_t *message)
 {
 
     if (handle->nmeaPubxPos == NULL)
@@ -15588,7 +16360,7 @@ uint8_t gnss_get_position(gnss_t *handle, gnss_nmea_pubx_pos_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_svstatus(gnss_t *handle, gnss_nmea_pubx_svstatus_t *message)
+uint8_t gnss_get_pubx_svstatus(gnss_t *handle, gnss_nmea_pubx_svstatus_t *message)
 {
 
     if (handle->nmeaPubxSvstatus == NULL)
@@ -15663,7 +16435,7 @@ uint8_t gnss_get_svstatus(gnss_t *handle, gnss_nmea_pubx_svstatus_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_time(gnss_t *handle, gnss_nmea_pubx_time_t *message)
+uint8_t gnss_get_pubx_time(gnss_t *handle, gnss_nmea_pubx_time_t *message)
 {
 
     if (handle->nmeaPubxTime == NULL)
@@ -15738,7 +16510,7 @@ uint8_t gnss_get_time(gnss_t *handle, gnss_nmea_pubx_time_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_aopstatus(gnss_t *handle, gnss_ubx_nav_aopstatus_t *message)
+uint8_t gnss_get_nav_aopstatus(gnss_t *handle, gnss_ubx_nav_aopstatus_t *message)
 {
 
     if (handle->ubxNavAopstatus == NULL)
@@ -15813,7 +16585,7 @@ uint8_t gnss_get_aopstatus(gnss_t *handle, gnss_ubx_nav_aopstatus_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_clock(gnss_t *handle, gnss_ubx_nav_clock_t *message)
+uint8_t gnss_get_nav_clock(gnss_t *handle, gnss_ubx_nav_clock_t *message)
 {
 
     if (handle->ubxNavClock == NULL)
@@ -15888,7 +16660,7 @@ uint8_t gnss_get_clock(gnss_t *handle, gnss_ubx_nav_clock_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_cov(gnss_t *handle, gnss_ubx_nav_cov_t *message)
+uint8_t gnss_get_nav_cov(gnss_t *handle, gnss_ubx_nav_cov_t *message)
 {
 
     if (handle->ubxNavCov == NULL)
@@ -15963,7 +16735,7 @@ uint8_t gnss_get_cov(gnss_t *handle, gnss_ubx_nav_cov_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_dop(gnss_t *handle, gnss_ubx_nav_dop_t *message)
+uint8_t gnss_get_nav_dop(gnss_t *handle, gnss_ubx_nav_dop_t *message)
 {
 
     if (handle->ubxNavDop == NULL)
@@ -16038,7 +16810,7 @@ uint8_t gnss_get_dop(gnss_t *handle, gnss_ubx_nav_dop_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_eoe(gnss_t *handle, gnss_ubx_nav_eoe_t *message)
+uint8_t gnss_get_nav_eoe(gnss_t *handle, gnss_ubx_nav_eoe_t *message)
 {
 
     if (handle->ubxNavEoe == NULL)
@@ -16113,7 +16885,7 @@ uint8_t gnss_get_eoe(gnss_t *handle, gnss_ubx_nav_eoe_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_odo(gnss_t *handle, gnss_ubx_nav_odo_t *message)
+uint8_t gnss_get_nav_odo(gnss_t *handle, gnss_ubx_nav_odo_t *message)
 {
 
     if (handle->ubxNavOdo == NULL)
@@ -16188,7 +16960,7 @@ uint8_t gnss_get_odo(gnss_t *handle, gnss_ubx_nav_odo_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_orb(gnss_t *handle, gnss_ubx_nav_orb_t *message)
+uint8_t gnss_get_nav_orb(gnss_t *handle, gnss_ubx_nav_orb_t *message)
 {
 
     if (handle->ubxNavOrb == NULL)
@@ -16263,7 +17035,7 @@ uint8_t gnss_get_orb(gnss_t *handle, gnss_ubx_nav_orb_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_pl(gnss_t *handle, gnss_ubx_nav_pl_t *message)
+uint8_t gnss_get_nav_pl(gnss_t *handle, gnss_ubx_nav_pl_t *message)
 {
 
     if (handle->ubxNavPl == NULL)
@@ -16338,7 +17110,7 @@ uint8_t gnss_get_pl(gnss_t *handle, gnss_ubx_nav_pl_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_posecef(gnss_t *handle, gnss_ubx_nav_posecef_t *message)
+uint8_t gnss_get_nav_posecef(gnss_t *handle, gnss_ubx_nav_posecef_t *message)
 {
 
     if (handle->ubxNavPosecef == NULL)
@@ -16413,7 +17185,7 @@ uint8_t gnss_get_posecef(gnss_t *handle, gnss_ubx_nav_posecef_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_posllh(gnss_t *handle, gnss_ubx_nav_posllh_t *message)
+uint8_t gnss_get_nav_posllh(gnss_t *handle, gnss_ubx_nav_posllh_t *message)
 {
 
     if (handle->ubxNavPosllh == NULL)
@@ -16488,7 +17260,7 @@ uint8_t gnss_get_posllh(gnss_t *handle, gnss_ubx_nav_posllh_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_pvt(gnss_t *handle, gnss_ubx_nav_pvt_t *message)
+uint8_t gnss_get_nav_pvt(gnss_t *handle, gnss_ubx_nav_pvt_t *message)
 {
 
     if (handle->ubxNavPvt == NULL)
@@ -16563,7 +17335,7 @@ uint8_t gnss_get_pvt(gnss_t *handle, gnss_ubx_nav_pvt_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_sat(gnss_t *handle, gnss_ubx_nav_sat_t *message)
+uint8_t gnss_get_nav_sat(gnss_t *handle, gnss_ubx_nav_sat_t *message)
 {
 
     if (handle->ubxNavSat == NULL)
@@ -16638,7 +17410,7 @@ uint8_t gnss_get_sat(gnss_t *handle, gnss_ubx_nav_sat_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_sbas(gnss_t *handle, gnss_ubx_nav_sbas_t *message)
+uint8_t gnss_get_nav_sbas(gnss_t *handle, gnss_ubx_nav_sbas_t *message)
 {
 
     if (handle->ubxNavSbas == NULL)
@@ -16713,7 +17485,7 @@ uint8_t gnss_get_sbas(gnss_t *handle, gnss_ubx_nav_sbas_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_sig(gnss_t *handle, gnss_ubx_nav_sig_t *message)
+uint8_t gnss_get_nav_sig(gnss_t *handle, gnss_ubx_nav_sig_t *message)
 {
 
     if (handle->ubxNavSig == NULL)
@@ -16788,7 +17560,7 @@ uint8_t gnss_get_sig(gnss_t *handle, gnss_ubx_nav_sig_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_slas(gnss_t *handle, gnss_ubx_nav_slas_t *message)
+uint8_t gnss_get_nav_slas(gnss_t *handle, gnss_ubx_nav_slas_t *message)
 {
 
     if (handle->ubxNavSlas == NULL)
@@ -16863,7 +17635,7 @@ uint8_t gnss_get_slas(gnss_t *handle, gnss_ubx_nav_slas_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_status(gnss_t *handle, gnss_ubx_nav_status_t *message)
+uint8_t gnss_get_nav_status(gnss_t *handle, gnss_ubx_nav_status_t *message)
 {
 
     if (handle->ubxNavStatus == NULL)
@@ -16938,7 +17710,7 @@ uint8_t gnss_get_status(gnss_t *handle, gnss_ubx_nav_status_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timebds(gnss_t *handle, gnss_ubx_nav_timebds_t *message)
+uint8_t gnss_get_nav_timebds(gnss_t *handle, gnss_ubx_nav_timebds_t *message)
 {
 
     if (handle->ubxNavTimebds == NULL)
@@ -17013,7 +17785,7 @@ uint8_t gnss_get_timebds(gnss_t *handle, gnss_ubx_nav_timebds_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timegal(gnss_t *handle, gnss_ubx_nav_timegal_t *message)
+uint8_t gnss_get_nav_timegal(gnss_t *handle, gnss_ubx_nav_timegal_t *message)
 {
 
     if (handle->ubxNavTimegal == NULL)
@@ -17088,7 +17860,7 @@ uint8_t gnss_get_timegal(gnss_t *handle, gnss_ubx_nav_timegal_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timeglo(gnss_t *handle, gnss_ubx_nav_timeglo_t *message)
+uint8_t gnss_get_nav_timeglo(gnss_t *handle, gnss_ubx_nav_timeglo_t *message)
 {
 
     if (handle->ubxNavTimeglo == NULL)
@@ -17163,7 +17935,7 @@ uint8_t gnss_get_timeglo(gnss_t *handle, gnss_ubx_nav_timeglo_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timegps(gnss_t *handle, gnss_ubx_nav_timegps_t *message)
+uint8_t gnss_get_nav_timegps(gnss_t *handle, gnss_ubx_nav_timegps_t *message)
 {
 
     if (handle->ubxNavTimegps == NULL)
@@ -17238,7 +18010,7 @@ uint8_t gnss_get_timegps(gnss_t *handle, gnss_ubx_nav_timegps_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timels(gnss_t *handle, gnss_ubx_nav_timels_t *message)
+uint8_t gnss_get_nav_timels(gnss_t *handle, gnss_ubx_nav_timels_t *message)
 {
 
     if (handle->ubxNavTimels == NULL)
@@ -17305,6 +18077,81 @@ uint8_t gnss_get_timels(gnss_t *handle, gnss_ubx_nav_timels_t *message)
 }
 
 /****************************************************************************
+ * @brief Retrieve UBX-NAV-TIMENAVIC message.
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @return 0: Success
+ * 1: No messages available for periodic message (data is stale/has already been read)
+ * 2: Failed to initialize memory for message object
+ * 3: Timed out waiting for return message
+ ****************************************************************************/
+uint8_t gnss_get_nav_timenavic(gnss_t *handle, gnss_ubx_nav_timenavic_t *message)
+{
+
+    if (handle->ubxNavTimenavic == NULL)
+    {
+        handle->ubxNavTimenavic = (gnss_ubx_nav_timenavic_t *)malloc(sizeof(gnss_ubx_nav_timenavic_t));
+        
+        if (handle->ubxNavTimenavic == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-NAV-TIMENAVIC message");
+            #endif
+            return 2;
+        }
+
+        handle->ubxNavTimenavic->periodic = false; // Periodic should be set using gnss_set_msg_auto
+    }
+
+    gnss_ubx_nav_timenavic_t *msg = handle->ubxNavTimenavic;
+
+    if (msg->periodic) // Configured for periodic message
+    {
+
+        if (msg->stale)
+            return 1;
+
+    }
+    else // Message is polled
+    {
+
+        uint8_t data = 0x00;
+
+        msg->stale = true;
+
+        timer_handle_t gen_timer;
+        timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+        // Send out poll request
+        gnss_ubx_msg(handle, (GNSS_UBX_NAV_TIMENAVIC >> 8) & 0xFF, GNSS_UBX_NAV_TIMENAVIC & 0xFF, 0x0000, &data, 1);
+
+        timer_start(&gen_timer);
+
+        while (msg->stale)
+        {
+
+            if (timer_check_exp(&gen_timer))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] TIMENAVIC poll request timed out");
+                #endif
+                return 3;
+            }
+
+            gnss_rec_and_parse(handle);
+
+        }
+    }
+
+    *message = *msg;
+
+    msg->stale = true;
+
+    return 0;
+
+}
+
+/****************************************************************************
  * @brief Retrieve UBX-NAV-TIMEQZSS message.
  * @param handle Handle for ublox gnss module.
  * @param message Pointer for message object to copy data to.
@@ -17313,7 +18160,7 @@ uint8_t gnss_get_timels(gnss_t *handle, gnss_ubx_nav_timels_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timeqzss(gnss_t *handle, gnss_ubx_nav_timeqzss_t *message)
+uint8_t gnss_get_nav_timeqzss(gnss_t *handle, gnss_ubx_nav_timeqzss_t *message)
 {
 
     if (handle->ubxNavTimeqzss == NULL)
@@ -17388,7 +18235,7 @@ uint8_t gnss_get_timeqzss(gnss_t *handle, gnss_ubx_nav_timeqzss_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_timeutc(gnss_t *handle, gnss_ubx_nav_timeutc_t *message)
+uint8_t gnss_get_nav_timeutc(gnss_t *handle, gnss_ubx_nav_timeutc_t *message)
 {
 
     if (handle->ubxNavTimeutc == NULL)
@@ -17463,7 +18310,7 @@ uint8_t gnss_get_timeutc(gnss_t *handle, gnss_ubx_nav_timeutc_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_velecef(gnss_t *handle, gnss_ubx_nav_velecef_t *message)
+uint8_t gnss_get_nav_velecef(gnss_t *handle, gnss_ubx_nav_velecef_t *message)
 {
 
     if (handle->ubxNavVelecef == NULL)
@@ -17538,7 +18385,7 @@ uint8_t gnss_get_velecef(gnss_t *handle, gnss_ubx_nav_velecef_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_velned(gnss_t *handle, gnss_ubx_nav_velned_t *message)
+uint8_t gnss_get_nav_velned(gnss_t *handle, gnss_ubx_nav_velned_t *message)
 {
 
     if (handle->ubxNavVelned == NULL)
@@ -17613,7 +18460,7 @@ uint8_t gnss_get_velned(gnss_t *handle, gnss_ubx_nav_velned_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_meas20(gnss_t *handle, gnss_ubx_rxm_meas20_t *message)
+uint8_t gnss_get_rxm_meas20(gnss_t *handle, gnss_ubx_rxm_meas20_t *message)
 {
 
     if (handle->ubxRxmMeas20 == NULL)
@@ -17688,7 +18535,7 @@ uint8_t gnss_get_meas20(gnss_t *handle, gnss_ubx_rxm_meas20_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_meas50(gnss_t *handle, gnss_ubx_rxm_meas50_t *message)
+uint8_t gnss_get_rxm_meas50(gnss_t *handle, gnss_ubx_rxm_meas50_t *message)
 {
 
     if (handle->ubxRxmMeas50 == NULL)
@@ -17763,7 +18610,7 @@ uint8_t gnss_get_meas50(gnss_t *handle, gnss_ubx_rxm_meas50_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_measc12(gnss_t *handle, gnss_ubx_rxm_measc12_t *message)
+uint8_t gnss_get_rxm_measc12(gnss_t *handle, gnss_ubx_rxm_measc12_t *message)
 {
 
     if (handle->ubxRxmMeasc12 == NULL)
@@ -17838,7 +18685,7 @@ uint8_t gnss_get_measc12(gnss_t *handle, gnss_ubx_rxm_measc12_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_measd12(gnss_t *handle, gnss_ubx_rxm_measd12_t *message)
+uint8_t gnss_get_rxm_measd12(gnss_t *handle, gnss_ubx_rxm_measd12_t *message)
 {
 
     if (handle->ubxRxmMeasd12 == NULL)
@@ -17913,7 +18760,7 @@ uint8_t gnss_get_measd12(gnss_t *handle, gnss_ubx_rxm_measd12_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_measx(gnss_t *handle, gnss_ubx_rxm_measx_t *message)
+uint8_t gnss_get_rxm_measx(gnss_t *handle, gnss_ubx_rxm_measx_t *message)
 {
 
     if (handle->ubxRxmMeasx == NULL)
@@ -17988,7 +18835,7 @@ uint8_t gnss_get_measx(gnss_t *handle, gnss_ubx_rxm_measx_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_rlm(gnss_t *handle, gnss_ubx_rxm_rlm_t *message)
+uint8_t gnss_get_rxm_rlm(gnss_t *handle, gnss_ubx_rxm_rlm_t *message)
 {
 
     if (handle->ubxRxmRlm == NULL)
@@ -18063,7 +18910,7 @@ uint8_t gnss_get_rlm(gnss_t *handle, gnss_ubx_rxm_rlm_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_sfrbx(gnss_t *handle, gnss_ubx_rxm_sfrbx_t *message)
+uint8_t gnss_get_rxm_sfrbx(gnss_t *handle, gnss_ubx_rxm_sfrbx_t *message)
 {
 
     if (handle->ubxRxmSfrbx == NULL)
@@ -18138,7 +18985,7 @@ uint8_t gnss_get_sfrbx(gnss_t *handle, gnss_ubx_rxm_sfrbx_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_tm2(gnss_t *handle, gnss_ubx_tim_tm2_t *message)
+uint8_t gnss_get_tim_tm2(gnss_t *handle, gnss_ubx_tim_tm2_t *message)
 {
 
     if (handle->ubxTimTm2 == NULL)
@@ -18213,7 +19060,7 @@ uint8_t gnss_get_tm2(gnss_t *handle, gnss_ubx_tim_tm2_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_tp(gnss_t *handle, gnss_ubx_tim_tp_t *message)
+uint8_t gnss_get_tim_tp(gnss_t *handle, gnss_ubx_tim_tp_t *message)
 {
 
     if (handle->ubxTimTp == NULL)
@@ -18288,7 +19135,7 @@ uint8_t gnss_get_tp(gnss_t *handle, gnss_ubx_tim_tp_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_vrfy(gnss_t *handle, gnss_ubx_tim_vrfy_t *message)
+uint8_t gnss_get_tim_vrfy(gnss_t *handle, gnss_ubx_tim_vrfy_t *message)
 {
 
     if (handle->ubxTimVrfy == NULL)
@@ -18363,7 +19210,7 @@ uint8_t gnss_get_vrfy(gnss_t *handle, gnss_ubx_tim_vrfy_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_comms(gnss_t *handle, gnss_ubx_mon_comms_t *message)
+uint8_t gnss_get_mon_comms(gnss_t *handle, gnss_ubx_mon_comms_t *message)
 {
 
     if (handle->ubxMonComms == NULL)
@@ -18437,7 +19284,7 @@ uint8_t gnss_get_comms(gnss_t *handle, gnss_ubx_mon_comms_t *message)
  * 1: Failed to initialize memory for message object
  * 2: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_gnss(gnss_t *handle, gnss_ubx_mon_gnss_t *message)
+uint8_t gnss_get_mon_gnss(gnss_t *handle, gnss_ubx_mon_gnss_t *message)
 {
 
     if (handle->ubxMonGnss == NULL)
@@ -18499,7 +19346,7 @@ uint8_t gnss_get_gnss(gnss_t *handle, gnss_ubx_mon_gnss_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_hw3(gnss_t *handle, gnss_ubx_mon_hw3_t *message)
+uint8_t gnss_get_mon_hw3(gnss_t *handle, gnss_ubx_mon_hw3_t *message)
 {
 
     if (handle->ubxMonHw3 == NULL)
@@ -18573,7 +19420,7 @@ uint8_t gnss_get_hw3(gnss_t *handle, gnss_ubx_mon_hw3_t *message)
  * 1: Failed to initialize memory for message object
  * 2: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_patch(gnss_t *handle, gnss_ubx_mon_patch_t *message)
+uint8_t gnss_get_mon_patch(gnss_t *handle, gnss_ubx_mon_patch_t *message)
 {
 
     if (handle->ubxMonPatch == NULL)
@@ -18627,6 +19474,67 @@ uint8_t gnss_get_patch(gnss_t *handle, gnss_ubx_mon_patch_t *message)
 }
 
 /****************************************************************************
+ * @brief Retrieve UBX-MON-RCVRSTAT message.
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @return 0: Success
+ * 1: No messages available for periodic message (data is stale/has already been read)
+ * 2: Failed to initialize memory for message object
+ * 3: Timed out waiting for return message
+ ****************************************************************************/
+uint8_t gnss_get_mon_rcvrstat(gnss_t *handle, gnss_ubx_mon_rcvrstat_t *message)
+{
+
+    if (handle->ubxMonRcvrstat == NULL)
+    {
+        handle->ubxMonRcvrstat = (gnss_ubx_mon_rcvrstat_t *)malloc(sizeof(gnss_ubx_mon_rcvrstat_t));
+        
+        if (handle->ubxMonRcvrstat == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-MON-RCVRSTAT message");
+            #endif
+            return 2;
+        }
+
+    }
+
+    gnss_ubx_mon_rcvrstat_t *msg = handle->ubxMonRcvrstat;
+
+    uint8_t data = 0x00;
+
+    msg->version = 0x00;
+
+    timer_handle_t gen_timer;
+    timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+    // Send out poll request
+    gnss_ubx_msg(handle, (GNSS_UBX_MON_RCVRSTAT >> 8) & 0xFF, GNSS_UBX_MON_RCVRSTAT & 0xFF, 0x0000, &data, 1);
+
+    timer_start(&gen_timer);
+
+    while (msg->version == 0)
+    {
+
+        if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] RCVRSTAT poll request timed out");
+            #endif
+            return 3;
+        }
+
+        gnss_rec_and_parse(handle);
+
+    }
+
+    *message = *msg;
+
+    return 0;
+
+}
+
+/****************************************************************************
  * @brief Retrieve UBX-MON-RF message.
  * @param handle Handle for ublox gnss module.
  * @param message Pointer for message object to copy data to.
@@ -18635,7 +19543,7 @@ uint8_t gnss_get_patch(gnss_t *handle, gnss_ubx_mon_patch_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_rf(gnss_t *handle, gnss_ubx_mon_rf_t *message)
+uint8_t gnss_get_mon_rf(gnss_t *handle, gnss_ubx_mon_rf_t *message)
 {
 
     if (handle->ubxMonRf == NULL)
@@ -18710,7 +19618,7 @@ uint8_t gnss_get_rf(gnss_t *handle, gnss_ubx_mon_rf_t *message)
  * 2: Failed to initialize memory for message object
  * 3: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_span(gnss_t *handle, gnss_ubx_mon_span_t *message)
+uint8_t gnss_get_mon_span(gnss_t *handle, gnss_ubx_mon_span_t *message)
 {
 
     if (handle->ubxMonSpan == NULL)
@@ -18784,7 +19692,7 @@ uint8_t gnss_get_span(gnss_t *handle, gnss_ubx_mon_span_t *message)
  * 1: Failed to initialize memory for message object
  * 2: Timed out waiting for return message
  ****************************************************************************/
-uint8_t gnss_get_version(gnss_t *handle, gnss_ubx_mon_ver_t *message)
+uint8_t gnss_get_mon_version(gnss_t *handle, gnss_ubx_mon_ver_t *message)
 {
 
     if (handle->ubxMonVer == NULL)
@@ -18837,3 +19745,152 @@ uint8_t gnss_get_version(gnss_t *handle, gnss_ubx_mon_ver_t *message)
 
 }
 
+/****************************************************************************
+ * @brief Retrieve UBX-SEC-SIG message.
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @return 0: Success
+ * 1: No messages available for periodic message (data is stale/has already been read)
+ * 2: Failed to initialize memory for message object
+ * 3: Timed out waiting for return message
+ ****************************************************************************/
+uint8_t gnss_get_sec_sig(gnss_t *handle, gnss_ubx_sec_sig_t *message)
+{
+
+    if (handle->ubxSecSig == NULL)
+    {
+        handle->ubxSecSig = (gnss_ubx_sec_sig_t *)malloc(sizeof(gnss_ubx_sec_sig_t));
+        
+        if (handle->ubxSecSig == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-SEC-SIG message");
+            #endif
+            return 2;
+        }
+
+        handle->ubxSecSig->periodic = false; // Periodic should be set using gnss_set_msg_auto
+    }
+
+    gnss_ubx_sec_sig_t *msg = handle->ubxSecSig;
+
+    if (msg->periodic) // Configured for periodic message
+    {
+
+        if (msg->stale)
+            return 1;
+
+    }
+    else // Message is polled
+    {
+
+        uint8_t data = 0x00;
+
+        msg->stale = true;
+
+        timer_handle_t gen_timer;
+        timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+        // Send out poll request
+        gnss_ubx_msg(handle, (GNSS_UBX_SEC_SIG >> 8) & 0xFF, GNSS_UBX_SEC_SIG & 0xFF, 0x0000, &data, 1);
+
+        timer_start(&gen_timer);
+
+        while (msg->stale)
+        {
+
+            if (timer_check_exp(&gen_timer))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] SEC_SIG poll request timed out");
+                #endif
+                return 3;
+            }
+
+            gnss_rec_and_parse(handle);
+
+        }
+    }
+
+    *message = *msg;
+
+    msg->stale = true;
+
+    return 0;
+
+}
+
+/****************************************************************************
+ * @brief Retrieve UBX-SEC-SIGLOG message.
+ * @param handle Handle for ublox gnss module.
+ * @param message Pointer for message object to copy data to.
+ * @return 0: Success
+ * 1: No messages available for periodic message (data is stale/has already been read)
+ * 2: Failed to initialize memory for message object
+ * 3: Timed out waiting for return message
+ ****************************************************************************/
+uint8_t gnss_get_sec_siglog(gnss_t *handle, gnss_ubx_sec_siglog_t *message)
+{
+
+    if (handle->ubxSecSiglog == NULL)
+    {
+        handle->ubxSecSiglog = (gnss_ubx_sec_siglog_t *)malloc(sizeof(gnss_ubx_sec_siglog_t));
+        
+        if (handle->ubxSecSiglog == NULL)
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to allocate initial memory for UBX-SEC-SIGLOG message");
+            #endif
+            return 2;
+        }
+
+        handle->ubxSecSiglog->periodic = false; // Periodic should be set using gnss_set_msg_auto
+    }
+
+    gnss_ubx_sec_siglog_t *msg = handle->ubxSecSiglog;
+
+    if (msg->periodic) // Configured for periodic message
+    {
+
+        if (msg->stale)
+            return 1;
+
+    }
+    else // Message is polled
+    {
+
+        uint8_t data = 0x00;
+
+        msg->stale = true;
+
+        timer_handle_t gen_timer;
+        timer_init(&gen_timer, 750000); // 750ms, 250 tends to be too quick, 500 misses some messages
+
+        // Send out poll request
+        gnss_ubx_msg(handle, (GNSS_UBX_SEC_SIGLOG >> 8) & 0xFF, GNSS_UBX_SEC_SIGLOG & 0xFF, 0x0000, &data, 1);
+
+        timer_start(&gen_timer);
+
+        while (msg->stale)
+        {
+
+            if (timer_check_exp(&gen_timer))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] SEC_SIGLOG poll request timed out");
+                #endif
+                return 3;
+            }
+
+            gnss_rec_and_parse(handle);
+
+        }
+    }
+
+    *message = *msg;
+
+    msg->stale = true;
+
+    return 0;
+
+}

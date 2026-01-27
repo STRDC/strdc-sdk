@@ -70,7 +70,6 @@ static uint8_t bmp390_parse_fifo(bmp390_t *, uint16_t);
  *  Configure associated GPIO,
  *  Initialize comm peripheral (I2C, SPI, UART).
  * @param handle Handle for bmp390 module.
- * @param speed Speed of peripheral (Hz).
  * @return 0: Initialization was successful
  * 1: Failed to Find I2C Device
  * 2: Failed to change configuration to SPI 3 Wire
@@ -80,7 +79,7 @@ static uint8_t bmp390_parse_fifo(bmp390_t *, uint16_t);
  * 6: Failed to load trimming coefficients as part of initialization
  * 7: Failed to initiate soft reset
  ****************************************************************************/
-uint8_t bmp390_init(bmp390_t *handle, uint32_t speed)
+uint8_t bmp390_init(bmp390_t *handle)
 {
 
     memset(handle->fifoBuffer, 0x00, FIFO_BUFFER_SIZE); // Reset FIFO Buffer
@@ -98,15 +97,9 @@ uint8_t bmp390_init(bmp390_t *handle, uint32_t speed)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init I2C");
         #endif
-
-        if (speed > 3400000)
-            speed = 3400000; // Max speed is 3.4 MHz
-
-        i2c_open((i2c_handle_t*)handle->bus, speed);
         
         if(i2c_find((i2c_handle_t*)handle->bus, handle->busAddr))
         {
-            i2c_close((i2c_handle_t*)handle->bus);
 
             #ifdef DEBUG
             Serial.println("[DEBUG] Failed to init I2C");
@@ -132,11 +125,6 @@ uint8_t bmp390_init(bmp390_t *handle, uint32_t speed)
         #ifdef DEBUG
         Serial.println("[DEBUG] Init SPI");
         #endif
-
-        if (speed > 10000000)
-            speed = 10000000; // Max speed is 10 MHz
-
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_3, SPI_BIT_ORDER_MSB); // Can operate on both Mode 0 and Mode 3, it switches automatically on CSB assert
 
         if (bmp390_soft_reset(handle))
         {
@@ -275,6 +263,8 @@ uint8_t bmp390_write(bmp390_t *handle, uint8_t address, uint8_t *data, uint8_t b
     if(handle->busType == BMP390_I2C)
     {
 
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
+
         if (i2c_write((i2c_handle_t*)handle->bus, txData, bytes + 1))
         {
             #ifdef DEBUG
@@ -320,6 +310,8 @@ uint8_t bmp390_read(bmp390_t *handle, uint8_t address, uint8_t *data, uint16_t l
 
     if(handle->busType == BMP390_I2C)
     {
+
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
         
         if (i2c_read_reg((i2c_handle_t*)handle->bus, &address, 0x01, data, length))
         {

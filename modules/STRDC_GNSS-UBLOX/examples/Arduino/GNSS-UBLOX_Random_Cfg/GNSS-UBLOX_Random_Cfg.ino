@@ -50,6 +50,7 @@ gnss_t myGNSS;
 #define SAM_M10Q
 //#define NEO_M9N
 //#define NEO_M9V
+//#define DAN_F10N
 
 #ifdef SAM_M10Q
 #define CHIP GNSS_SAM_M10Q
@@ -61,6 +62,10 @@ gnss_t myGNSS;
 
 #ifdef NEO_M9V
 #define CHIP GNSS_NEO_M9V
+#endif
+
+#ifdef DAN_F10N
+#define CHIP GNSS_DAN_F10N
 #endif
 
 // Create interrupt handler for easier enable/disable
@@ -122,8 +127,8 @@ void setup()
   * Initialization
   *************************************/
 
+  myGNSS.rcvr = CHIP;
   myGNSS.pinRst = RESET;
-
   
   #ifdef USE_I2C
   // I2C Configuration
@@ -133,7 +138,9 @@ void setup()
 
   peripheral = 0;
 
-  while(gnss_init(&myGNSS, 400000))
+  i2c_open((i2c_handle_t*)myGNSS.bus, 400000); // Max speed is 400 kHz
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS I2C");
     gnss_reset_hw(&myGNSS);
@@ -149,7 +156,9 @@ void setup()
 
   peripheral = 2;
 
-  while(gnss_init(&myGNSS, 3000000))
+  spi_open((spi_handle_t*)myGNSS.bus, 3000000, SPI_MODE_0, SPI_BIT_ORDER_MSB); // Max speed is 5.5 MHz
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS SPI");
     gnss_reset_hw(&myGNSS);
@@ -162,9 +171,22 @@ void setup()
   myGNSS.bus = &uart2; // UART Bus 2
   myGNSS.busType = GNSS_UART;
 
+  uint32_t uart_speed = 9600;
+
+  #ifdef DAN_F10N
+  uart_speed = 38400;
+  #endif
+
   peripheral = 1;
 
-  while(gnss_init(&myGNSS, 9600))
+  if(serial_open((serial_handle_t*)myGNSS.bus, uart_speed, UART_TYPE_BASIC))
+  {
+    Serial.println("Failed to open UART");
+    while (1)
+      ;
+  }
+
+  while(gnss_init(&myGNSS))
   {
     Serial.println("Failed to initialize GNSS Serial");
     gnss_reset_hw(&myGNSS);
@@ -208,7 +230,7 @@ void setup()
   uint8_t enable_polarity = 0; // 0: active high, 1: active low
   uint8_t threshold = 2; // Threshold of # x 8 bytes to trigger TXREADY
 
-  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH, CHIP))
+  if (gnss_enable_rdy(&myGNSS, enable_pio, enable_polarity, threshold, ENABLE_PERIPH))
   {
     Serial.println("Failed to enable TXREADY");
     while (1)
@@ -337,11 +359,11 @@ void setup()
   }
 
   /*************************************
-  * Change UART Baudrate (Comment out to use Default 9600)
+  * Change UART Baudrate (Comment out to use Default Speed)
   *************************************/
-
+  /*
   #ifdef USE_UART
-  
+
   timer_handle_t changeover_timer;
   timer_init(&changeover_timer, 1000000); // Wait 1s to receive any pending messages so we don't miss anything on the speed handover
 
@@ -362,7 +384,7 @@ void setup()
   Serial.println("Successfully switched baudrate!");
 
   #endif
-
+  */
 }
 
 void loop() {
@@ -402,7 +424,7 @@ void loop() {
   *************************************/
 
   // This function polls and receives UBX-NAV-PVT if not enabled for periodic messaging (only returning successful if a new message is received), or it checks if it received a new message if it is enabled for periodic messaging
-  if(!gnss_get_pvt(&myGNSS, &pvt_msg))
+  if(!gnss_get_nav_pvt(&myGNSS, &pvt_msg))
   {
 
     if (pvt_msg.validDate)
@@ -439,7 +461,7 @@ void loop() {
 
   }
 
-  if(!gnss_get_clock(&myGNSS, &clock_msg))
+  if(!gnss_get_nav_clock(&myGNSS, &clock_msg))
   {
 
     Serial.print("Clock Bias (ns): "); Serial.println(clock_msg.bias);

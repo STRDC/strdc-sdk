@@ -173,7 +173,6 @@ static uint8_t bno08x_int_wait(bno08x_t *handle)
  *  Receive Initialization Messages,
  *  Get Product ID
  * @param handle Handle for BNO08x chip.
- * @param speed Speed of peripheral (Hz)
  * @return 0: Read asserted interrupt successful
  *  1: Failed to receive interrupt after reset
  *  2: Failed to Find I2C Device
@@ -182,7 +181,7 @@ static uint8_t bno08x_int_wait(bno08x_t *handle)
  *  5: Failed to Get Product ID
  *  6: Failed to Receive Reset Complete
  ****************************************************************************/
-uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
+uint8_t bno08x_init(bno08x_t *handle)
 {
     
     // Initialize BNO08x Attributes
@@ -229,11 +228,9 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
 
     if(handle->busType == BNO08X_I2C)
     {
-        i2c_open((i2c_handle_t*)handle->bus, speed);
         
         if(i2c_find((i2c_handle_t*)handle->bus, handle->busAddr))
         {
-            i2c_close((i2c_handle_t*)handle->bus);
             return 2; // Didn't receive response from I2C Address
         }
         
@@ -244,8 +241,6 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
     }
     else if(handle->busType == BNO08X_SPI)
     {
-        spi_open((spi_handle_t*)handle->bus, speed, SPI_MODE_3, SPI_BIT_ORDER_MSB);
-
         gpio_write(handle->wakePin, GPIO_HIGH); // Set P0 to High
     }
     else if(handle->busType == BNO08X_UART)
@@ -256,9 +251,6 @@ uint8_t bno08x_init(bno08x_t *handle, uint32_t speed)
         #ifdef UART_BUFFER_EXTRA
         serial_buffer_read_add((serial_handle_t*)handle->bus, uart_buff, 192);
         #endif
-
-        if(serial_open((serial_handle_t*)handle->bus, speed, UART_TYPE_BASIC))
-            return 2;
 
         gpio_write(handle->wakePin, GPIO_LOW); // Set P0 to Low
     }
@@ -527,6 +519,8 @@ static uint8_t bno08x_tx(bno08x_t *handle, uint8_t *data, uint8_t bytes)
             gpio_write(handle->wakePin, GPIO_LOW);
             timer_blocking_delay(50); // Wait min time for interrupt
         }
+
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
         
         if (i2c_write((i2c_handle_t*)handle->bus, data, bytes))
             return 2;
@@ -718,6 +712,8 @@ static uint8_t bno08x_rx(bno08x_t *handle)
                 gpio_write(handle->wakePin, GPIO_HIGH);
             return 1;
         }
+
+        i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
 
         if (i2c_read((i2c_handle_t*)handle->bus, handle->buffer, 2))
         {

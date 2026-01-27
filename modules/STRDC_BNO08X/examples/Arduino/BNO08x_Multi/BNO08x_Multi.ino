@@ -103,7 +103,7 @@ typedef struct {
 } bno_data_t;
 
 bno_data_t bno_data1;
-bno_data_t bno_data2 ;
+bno_data_t bno_data2;
 
 // Create interrupt handler for easier enable/disable
 isr_handle_t* bno_int1;
@@ -163,22 +163,36 @@ void setup() {
   
   #ifdef USE_SPI
   // SPI Configuration
-  bno.bus = &SPI_0;
-  bno.busType = BNO08X_SPI;
-  bno.busAddr = BNO_SS;
+  bno1.bus = &SPI_0;
+  bno1.busType = BNO08X_SPI;
+  bno1.busAddr = BNO_SS;
+
+  spi_open((spi_handle_t*)bno1.bus, 1000000, SPI_MODE_3, SPI_BIT_ORDER_MSB);
+
   #endif
   
   #ifdef USE_I2C
   // I2C Configuration
-  bno.bus = &i2c1;
-  bno.busType = BNO08X_I2C;
-  bno.busAddr = BNO_ADDRESS;
+  bno2.bus = &i2c1;
+  bno2.busType = BNO08X_I2C;
+  bno2.busAddr = BNO_ADDRESS;
+
+  i2c_open((i2c_handle_t*)bno2.bus, 400000);
+
   #endif
   
   #ifdef USE_UART
   // UART Configuration
-  bno.bus = &uart2;
-  bno.busType = BNO08X_UART;
+  bno1.bus = &uart2;
+  bno1.busType = BNO08X_UART;
+
+  if(serial_open((serial_handle_t*)bno1.bus, 3000000, UART_TYPE_BASIC)) // UART must be 3Mbaud (3000000)
+  {
+    Serial.println("Failed to open Serial connection")
+    while (1)
+      ;
+  }
+
   #endif
   
   // Shared Pin Configuration

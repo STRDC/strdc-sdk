@@ -249,7 +249,7 @@ typedef struct {
 
 // Functions
 
-uint8_t bmp390_init(bmp390_t *, uint32_t);
+uint8_t bmp390_init(bmp390_t *);
 uint8_t bmp390_soft_reset(bmp390_t *);
 
 uint8_t bmp390_write(bmp390_t *, uint8_t, uint8_t *, uint8_t);

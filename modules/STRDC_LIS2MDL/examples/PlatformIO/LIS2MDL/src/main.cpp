@@ -90,7 +90,9 @@ void setup() {
   myLis.busType = LIS2MDL_I2C;
   myLis.busAddr = LIS2MDL_ADDRESS;
 
-  while(lis2mdl_init(&myLis, 400000))
+  i2c_open((i2c_handle_t*)myLis.bus, 400000); // Max speed is 3.4 MHz
+
+  while(lis2mdl_init(&myLis))
   {
     Serial.println("Failed to initialize LIS2MDL I2C");
     delay(1000);
@@ -103,7 +105,9 @@ void setup() {
   myLis.busType = LIS2MDL_SPI_4_WIRE;
   myLis.busAddr = LIS2MDL_SS;
 
-  while(lis2mdl_init(&myLis, 5000000))
+  spi_open((spi_handle_t*)handle->bus, 5000000, SPI_MODE_3, SPI_BIT_ORDER_MSB); // Max speed is 10 MHz
+
+  while(lis2mdl_init(&myLis))
   {
     Serial.println("Failed to initialize LIS2MDL SPI");
     delay(1000);
@@ -116,7 +120,9 @@ void setup() {
   myLis.busType = LIS2MDL_SPI_3_WIRE;
   myLis.busAddr = LIS2MDL_SS;
 
-  while(lis2mdl_init(&myLis, 5000000))
+  spi_open((spi_handle_t*)handle->bus, 5000000, SPI_MODE_3, SPI_BIT_ORDER_MSB); // Max speed is 10 MHz
+
+  while(lis2mdl_init(&myLis))
   {
     Serial.println("Failed to initialize LIS2MDL SPI 3-Wire");
     delay(1000);
