@@ -249,6 +249,68 @@ void setup()
   #endif
 
   /*************************************
+  * Disable Signals (if desired) (Comment out to use Default)
+  *************************************/
+  /*
+  // The receiver will prevent any invalid signal configurations
+  // See gnss_update_signals() definition for more information
+  // Signals not supported by receiver will be ignored in configuration (and need not be set)
+
+  gnss_signal_cfg_t signals;
+
+  signals.gps_ena = 1; // GPS Enable
+  signals.gps_l1ca_ena = 1; // GPS L1 C/A
+  signals.gps_l5_ena = 1; // GPS L5
+  signals.sbas_ena = 1; // SBAS Enable
+  signals.sbas_l1ca_ena = 1; // SBAS L1 C/A
+  signals.gal_ena = 1; // Galileo Enable
+  signals.gal_e1_ena = 1; // Galileo E1
+  signals.gal_e5a_ena = 1; // Galileo E5a
+  signals.bds_ena = 1; // BeiDou Enable
+  signals.bds_b1_ena = 0; // BeiDou B1I
+  signals.bds_b1c_ena = 1; // BeiDou B1C
+  signals.bds_b2a_ena = 1; // BeiDou B2a
+  signals.qzss_ena = 1; // QZSS Enable
+  signals.qzss_l1ca_ena = 1; // QZSS L1 C/A
+  signals.qzss_l1s_ena = 1; // QZSS L1S
+  signals.qzss_l5_ena = 1; // QZSS L5
+  signals.glo_ena = 1; // GLONASS Enable
+  signals.glo_l1_ena = 1; // GLONASS L1
+  signals.navic_ena = 1; // NavIC Enable
+  signals.navic_l5_ena = 1; // NavIC L5
+
+  Serial.println("Setting signals (this may take a few seconds)...");
+  
+  if (gnss_set_signals(&myGNSS, &signals))
+  {
+    Serial.println("Failed to update signals");
+    while (1)
+      ;
+  }
+  */
+  /*************************************
+  * Override GPS L5 Unhealthy, Preoperational Status
+  *************************************/
+  /*
+  // At this time, GPS L5 Signals are preoperational and are set unhealthy until sufficient monitoring capability is established.
+  // GPS L5 signals may be evaluated before they become fully operational by overriding the GPS L5 health status with the respective GPS L1 C/A signal status.
+  // DO NOT USE UNHEALTHY, PRE-OPERATIONAL GPS L5 SIGNALS FOR SAFETY-OF-LIFE OR OTHER CRITICAL PURPOSES.
+  // See DAN-F10N Integration Manual 2.1.3 for more information.
+  
+  #ifdef DAN_F10N
+
+  bool l5Override = 1;
+
+  if (gnss_gps_l5_override(&myGNSS, l5Override))
+  {
+    Serial.println("Failed to update GPS L5 Override");
+    while (1)
+      ;
+  }
+
+  #endif
+  */
+  /*************************************
   * Setup Navigation Rates (Comment out to use Default)
   *************************************/
   

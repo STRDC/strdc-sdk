@@ -85,7 +85,8 @@ bno08x_t bno2;
 #endif
 
 // BNO08x Info
-#define BNO_ADDRESS 0x4A
+#define BNO_ADDRESS 0x4A // If DI is LOW
+//#define BNO_ADDRESS 0x4B // If DI is HIGH
 #define BNO_SS 0
 
 // Sensor to enable

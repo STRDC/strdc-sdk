@@ -2148,6 +2148,7 @@ uint8_t gnss_set_batch(gnss_t *, gnss_batch_cfg_t *);
 uint8_t gnss_set_pulse(gnss_t *, gnss_pulse_cfg_t *);
 uint8_t gnss_set_psm(gnss_t *, gnss_psm_cfg_t *);
 uint8_t gnss_set_signals(gnss_t *, gnss_signal_cfg_t *);
+uint8_t gnss_gps_l5_override(gnss_t *, bool);
 uint8_t gnss_set_dynamic_model(gnss_t *, uint8_t);
 uint8_t gnss_set_odo_model(gnss_t *, uint8_t);
 uint8_t gnss_set_static_hold(gnss_t *, uint8_t, uint16_t);

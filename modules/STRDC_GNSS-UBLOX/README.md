@@ -31,4 +31,5 @@ No support for USB communication at this time.
 
 # Store Pages
 [SAM-M10Q GPS Receiver Breakout Board](https://shop.strdc.com/products/sam-m10q-bob/)
+
 [NEO-M9N GPS Receiver Breakout Board](https://shop.strdc.com/products/neo-m9n-bob/)
