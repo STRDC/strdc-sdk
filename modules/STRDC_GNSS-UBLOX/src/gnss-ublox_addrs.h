@@ -744,6 +744,7 @@
 
 #define GNSS_CFG_SIGNAL_GPS_ENA                 0x1031001F
 #define GNSS_CFG_SIGNAL_GPS_L1CA_ENA            0x10310001
+#define GNSS_CFG_SIGNAL_GPS_OVERRIDE_L5         0x10320001 // Overrides GPS L5 satellite health status with L1 - For use until L5 is operational. Do so at your own risk, see DAN-F10N Integration Manual 2.1.3.
 #define GNSS_CFG_SIGNAL_GPS_L5_ENA              0x10310004
 #define GNSS_CFG_SIGNAL_SBAS_ENA                0x10310020
 #define GNSS_CFG_SIGNAL_SBAS_L1CA_ENA           0x10310005

@@ -280,6 +280,28 @@ void setup()
   }
   */
   /*************************************
+  * Override GPS L5 Unhealthy, Preoperational Status
+  *************************************/
+  /*
+  // At this time, GPS L5 Signals are preoperational and are set unhealthy until sufficient monitoring capability is established.
+  // GPS L5 signals may be evaluated before they become fully operational by overriding the GPS L5 health status with the respective GPS L1 C/A signal status.
+  // DO NOT USE UNHEALTHY, PRE-OPERATIONAL GPS L5 SIGNALS FOR SAFETY-OF-LIFE OR OTHER CRITICAL PURPOSES.
+  // See DAN-F10N Integration Manual 2.1.3 for more information.
+  
+  #ifdef DAN_F10N
+
+  bool l5Override = 1;
+
+  if (gnss_gps_l5_override(&myGNSS, l5Override))
+  {
+    Serial.println("Failed to update GPS L5 Override");
+    while (1)
+      ;
+  }
+
+  #endif
+  */
+  /*************************************
   * Setup Navigation Rates (Comment out to use Default)
   *************************************/
   /*

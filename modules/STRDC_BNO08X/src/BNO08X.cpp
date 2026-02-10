@@ -32,6 +32,12 @@
 
 #include <string.h>
 
+#define DEBUG
+
+#ifdef DEBUG
+#include <Arduino.h>
+#endif
+
 // Sensor Length Map
 uint8_t report_length[] = {
     0, // 0
@@ -155,6 +161,9 @@ static uint8_t bno08x_int_wait(bno08x_t *handle)
             return 0;
     }
 
+    #ifdef DEBUG
+    Serial.println("[DEBUG] Timed out waiting for interrupt");
+    #endif
     return 1;
 
 }
@@ -231,6 +240,9 @@ uint8_t bno08x_init(bno08x_t *handle)
         
         if(i2c_find((i2c_handle_t*)handle->bus, handle->busAddr))
         {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed to receive response from I2C address at startup");
+            #endif
             return 2; // Didn't receive response from I2C Address
         }
         
@@ -259,19 +271,34 @@ uint8_t bno08x_init(bno08x_t *handle)
     
     gpio_write(handle->wakePin, GPIO_HIGH); // Ensure wake pin isn't asserted
     
-    if(handle->busType != BNO08X_UART) // Interrupt wait is working sporadically, likely caused by read buffer size being too small
+    if(handle->busType == BNO08X_SPI) // Used to be != BNO08X_UART, but this is likely unnecessary on I2C as well
     {
         if (bno08x_int_wait(handle))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timeout waiting for interrupt");
+            #endif
             return 1;
+        }
     }
     
     if (bno08x_SHTP_startup(handle))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed SHTP startup");
+        #endif
         return 3;
+    }
 
     if(handle->busType != BNO08X_UART)  // Downstream impact of buffer size - large size is only needed for SHTP, we can't read it all atm so it prevents proper segmentation from hub startup
     {
         if (bno08x_hub_startup(handle))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed Hub Startup");
+            #endif
             return 4;
+        }
     }
 
     timer_handle_t gen_timer;
@@ -282,14 +309,24 @@ uint8_t bno08x_init(bno08x_t *handle)
     {
         
         if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Failed waiting for execution channel reset");
+            #endif
             return 6;
+        }
         
         bno08x_get_messages(handle);
 
     }
 
     if (bno08x_get_ID(handle))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to get ID");
+        #endif
         return 5;
+    }
     
     return 0;
 
@@ -321,7 +358,12 @@ static uint8_t bno08x_hub_reinit(bno08x_t *handle)
     while (!handle->isInit)
     {
         if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out waiting for initialization");
+            #endif
             return 1;
+        }
 
         bno08x_get_messages(handle);
     }
@@ -349,7 +391,12 @@ static uint8_t bno08x_SHTP_startup(bno08x_t *handle)
     {
         
         if (timer_check_exp(&adv_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out waiting to receive initial advertisement");
+            #endif
             return 1;
+        }
         
         bno08x_get_messages(handle);
 
@@ -378,7 +425,12 @@ static uint8_t bno08x_hub_startup(bno08x_t *handle)
     {
         
         if (timer_check_exp(&adv_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out waiting for all clear from command channel");
+            #endif
             return 1;
+        }
         
         bno08x_get_messages(handle);
 
@@ -394,7 +446,8 @@ static uint8_t bno08x_hub_startup(bno08x_t *handle)
  * @brief Request Product ID and store data in handle.
  * @param handle Handle for BNO08x chip.
  * @return 0: Success
- *  1: Timed out
+ *  1: Timed out attempting to request ID
+ *  2: Timed out waiting for ID response
  ****************************************************************************/
 static uint8_t bno08x_get_ID(bno08x_t *handle)
 {
@@ -420,7 +473,12 @@ static uint8_t bno08x_get_ID(bno08x_t *handle)
     while(bno08x_tx(handle, idCmd, sizeof(idCmd)))
     {        
         if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out attempting to request ID");
+            #endif
             return 1;
+        }
 
     }
 
@@ -431,7 +489,12 @@ static uint8_t bno08x_get_ID(bno08x_t *handle)
     while(!handle->isID) // Wait for response
     {
         if (timer_check_exp(&gen_timer))
-            return 1;
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out waiting for ID response");
+            #endif
+            return 2;
+        }
 
         bno08x_get_messages(handle);
     }
@@ -465,7 +528,12 @@ uint8_t bno08x_sleep(bno08x_t *handle)
 
     // Send Sleep Command
     if (bno08x_exec_request(handle, BNO08X_EXEC_CMD_SLEEP))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send sleep command");
+        #endif
         return 1;
+    }
 
     // Flush enabled sensors disabled by sleep - BNO08x has issues re-enabling sensors when the Get Feature Response is not read (particularly I2C)
     if (j > 0)
@@ -473,7 +541,12 @@ uint8_t bno08x_sleep(bno08x_t *handle)
         for (uint8_t t = 0; t < j; t++)
         {
             if (bno08x_flush(handle, flushReps[t]))
+            {
+                #ifdef DEBUG
+                Serial.println("[DEBUG] Failed to execute flush command");
+                #endif
                 return 2;
+            }
         }
     }
 
@@ -704,7 +777,7 @@ static uint8_t bno08x_rx(bno08x_t *handle)
             gpio_write(handle->wakePin, GPIO_LOW);
             timer_blocking_delay(50); // Wait min time for interrupt
         }
-        
+        /* This is likely unnecessary, removing temporarily
         // Check if BNO08x has data to send
         if (bno08x_int_wait(handle))
         {
@@ -712,7 +785,7 @@ static uint8_t bno08x_rx(bno08x_t *handle)
                 gpio_write(handle->wakePin, GPIO_HIGH);
             return 1;
         }
-
+        */
         i2c_set_addr((i2c_handle_t*)handle->bus, handle->busAddr); // Address this IC in case we're using this bus for multiple devices
 
         if (i2c_read((i2c_handle_t*)handle->bus, handle->buffer, 2))
@@ -733,7 +806,7 @@ static uint8_t bno08x_rx(bno08x_t *handle)
         length &= 0x7FFF; // Drop continuation bit
 
         if (length == 0) // Don't read if no length
-            return 3;  
+            return 3;
 
         if (length > BNO08X_BUFFER_SIZE)
             length = BNO08X_BUFFER_SIZE; // Change this to some type of return error
@@ -749,7 +822,7 @@ static uint8_t bno08x_rx(bno08x_t *handle)
                 gpio_write(handle->wakePin, GPIO_LOW);
                 timer_blocking_delay(50); // Wait min time for interrupt
             }
-
+            /* This is likely unnecessary, removing temporarily
             // Check if BNO08x has data to send
             if (bno08x_int_wait(handle))
             {
@@ -757,7 +830,7 @@ static uint8_t bno08x_rx(bno08x_t *handle)
                     gpio_write(handle->wakePin, GPIO_HIGH);
                 return 1;
             }
-
+            */
             if (i2c_read((i2c_handle_t*)handle->bus, buff, toRead)) // MSB indicates if more data needs to be read
             {
                 if (handle->isSleep)
@@ -2102,6 +2175,7 @@ uint8_t bno08x_feature_get(bno08x_t *handle, uint8_t sensor, uint8_t *flags, uin
  * @return 0: Success
  *  1: Timed out
  *  2: BNO08x Response does not match requested
+ *  3: Failed to send Set Feature Command
  ****************************************************************************/
 uint8_t bno08x_feature_set(bno08x_t *handle, uint8_t sensor, uint8_t flags, uint16_t sensitivity, uint32_t interval, uint32_t batch, uint32_t configWord)
 {
@@ -2129,7 +2203,12 @@ uint8_t bno08x_feature_set(bno08x_t *handle, uint8_t sensor, uint8_t flags, uint
 
     // Send Set Feature Command
     if (bno08x_feature_request(handle, BNO08X_REPORT_SET_FEATURE_COMMAND, params))
-        return 1;
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to send Set Feature Command");
+        #endif
+        return 3;
+    }
 
     timer_handle_t gen_timer;
     timer_init(&gen_timer, 250000); // 250ms
@@ -2140,7 +2219,12 @@ uint8_t bno08x_feature_set(bno08x_t *handle, uint8_t sensor, uint8_t flags, uint
     {
         
         if (timer_check_exp(&gen_timer))
+        {
+            #ifdef DEBUG
+            Serial.println("[DEBUG] Timed out waiting for Set Feature Command Response");
+            #endif
             return 1;
+        }
 
         bno08x_get_messages(handle);
 
@@ -2150,15 +2234,40 @@ uint8_t bno08x_feature_set(bno08x_t *handle, uint8_t sensor, uint8_t flags, uint
 
     // Confirm response matches settings requested
     if ((flags & 0x01) != handle->reports[sensor].sensType)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Set Feature Response does not match Sensor Type");
+        #endif
         return 2;
+    }
     if (((flags >> 1) & 0x01) != handle->reports[sensor].sensEn)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Set Feature Response does not match Sensor Enable");
+        #endif
         return 2;
+    }
     if (((flags >> 2) & 0x01) != handle->reports[sensor].wakeupEn)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Set Feature Response does not match Wakeup Enable");
+        #endif
         return 2;
+    }
     if (((flags >> 3) & 0x01) != handle->reports[sensor].alwaysonEn)
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Set Feature Response does not match Always on Enable");
+        #endif
         return 2;
+    }
     if (handle->reports[sensor].enabled != ((interval > 0) || (batch > 0))) // Interval and batch may change from requested based on sensor
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Set Feature Response does not match interval or batch");
+        #endif
         return 2;
+    }
 
     return 0;
 
@@ -2592,8 +2701,11 @@ uint8_t bno08x_dcd_clr(bno08x_t *handle)
 
     // Run startup sequence again
 
-    if (bno08x_int_wait(handle))
-        return 1;
+    if(handle->busType == BNO08X_SPI) // Used to be != BNO08X_UART, but this is likely unnecessary on I2C as well
+    {
+        if (bno08x_int_wait(handle))
+            return 1;
+    }
     
     if(bno08x_SHTP_startup(handle))
         return 1;

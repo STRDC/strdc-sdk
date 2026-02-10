@@ -64,7 +64,7 @@ uint8_t hal_serial_open(serial_handle_t *handle, uint32_t speed, uint8_t busType
             if ((handle->type & 0x01) == UART_TYPE_FLOW_RTS)
                 handle->bus->attachRts(handle->rtsPin);
             if ((handle->type & 0x02) == UART_TYPE_FLOW_CTS)
-                handle->bus->attachCts(handle->rtsPin);
+                handle->bus->attachCts(handle->ctsPin);
         }
     }
 

@@ -5398,6 +5398,31 @@ uint8_t gnss_set_signals(gnss_t *handle, gnss_signal_cfg_t *signalCfg)
 }
 
 /****************************************************************************
+ * @brief Override GPS L5 Health status with GPS L1 C/A (or revert). For use with preoperational GPS L5.
+ * @note DO NOT USE UNHEALTHY, PRE-OPERATIONAL GPS L5 SIGNALS FOR SAFETY-OF-LIFE OR OTHER CRITICAL PURPOSES
+ * @param handle Handle for ublox gnss module.
+ * @param enable Enable/Disable override.
+ * @return 0: Success
+ * 1: Failed to set configuration data
+ ****************************************************************************/
+uint8_t gnss_gps_l5_override(gnss_t *handle, bool enable)
+{
+
+    uint8_t data = enable;
+
+    if (gnss_cfg_set(handle, GNSS_BBR_RAM, GNSS_CFG_SIGNAL_GPS_OVERRIDE_L5, &data, 0x01))
+    {
+        #ifdef DEBUG
+        Serial.println("[DEBUG] Failed to set GPS L5 Override");
+        #endif
+        return 1;
+    }
+
+    return 0;
+
+}
+
+/****************************************************************************
  * @brief Set CFG-NAV-SPG-DYNMODEL to one of the presets, configures max velocities, altitude, position deviation, and sanity check type.
  * @param handle Handle for ublox gnss module.
  * @param model Dynamic Model to set in the configuration.
@@ -6230,11 +6255,7 @@ static uint8_t gnss_tx(gnss_t *handle, uint8_t *data, uint8_t bytes)
     else if(handle->busType == GNSS_UART)
     {
 
-        for (uint8_t j = 0; j < bytes; j++)
-        {
-            serial_write((serial_handle_t*)handle->bus, &data[j], 1); // Send data byte
-        }
-        
+        serial_write((serial_handle_t*)handle->bus, data, bytes); // Send data bytes
 
     }
 
